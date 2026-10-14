@@ -50,4 +50,6 @@ class RuntimeSnapshot:
     paths: list[dict[str, Any]] = field(default_factory=list)
     clients: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    path_count: int | None = None
+    paths_truncated: bool = False
 

@@ -196,7 +196,8 @@ def normalize_paths(data: Any) -> list[dict[str, Any]]:
     return output
 
 
-def path_health(paths: Iterable[dict[str, Any]], labels: dict[tuple[str, str], str] | None = None) -> dict[str, Any]:
+def path_health(paths: Iterable[dict[str, Any]], labels: dict[tuple[str, str], str] | None = None,
+                total_count: int | None = None) -> dict[str, Any]:
     labels = labels or {}
     groups: dict[str, dict[str, Any]] = {}
     total = 0
@@ -208,6 +209,8 @@ def path_health(paths: Iterable[dict[str, Any]], labels: dict[tuple[str, str], s
         if path.get("hops") is not None: group["hops"].append(path["hops"])
         if path.get("interface"): group["interfaces"].add(str(path["interface"]))
         if path.get("destination") and len(group["samples"]) < SAMPLE_LIMIT: group["samples"].append(path["destination"])
+    observed_total = total
+    total = max(observed_total, total_count or 0)
     rows = []
     for via, group in groups.items():
         rows.append({"via": via, "label": labels.get(("transport", via)), "count": group["count"],

@@ -42,7 +42,7 @@ Supported observation targets:
 - host-native Python Reticulum;
 - `rnsd` managed by systemd;
 - manually launched `rnsd` / shared instance;
-- Docker-hosted Reticulum when the isolated sanitizer can read its config through a read-only mount and its shared instance is reachable. The web container never receives that mount.
+- Docker-hosted Reticulum when the isolated observation helper can read its config/storage through a read-only mount and its shared instance is reachable. The web container never receives that mount.
 
 Process-manager and Docker detection are evidence only. The backend abstraction is lifecycle-neutral: `ReticulumBackend` exposes `detect()`, `runtime_status()`, `paths()`, `interfaces()`, `clients()`, `config_view()`, and `capabilities()`.
 
@@ -69,11 +69,13 @@ export BOLT_ON_OBSERVER_DATA="$(pwd)/bolt-on-data/observer-input"
 docker compose up --build
 ```
 
-The web container is non-root, drops all capabilities, has a read-only root filesystem, and has no Docker socket or production Reticulum mount. Host networking is used only so the existing shared instance can be reached. Reticulum itself does not need to be containerized.
+The web container runs as UID 10001, drops all capabilities, has a read-only root filesystem, and has no Docker socket, production Reticulum mount, identity, or RPC key. It reads only sanitized JSON snapshots from the helper plus its separate writable GUI database. Reticulum itself does not need to be containerized.
 
-A separate sanitizer boundary runs as container UID 0 solely to read a root-owned production directory mounted read-only. It has no network, no Linux capabilities, a read-only root filesystem, and no Docker socket. Every 30 seconds it atomically refreshes GUI-owned data containing only the minimum shared-instance settings (`instance_name` or configured shared/control ports), Transport state, interface presentation fields, source hash, and safe diagnostics. It never copies interface sections into the RNS client config, and never copies IFAC material, passphrases, identities, private keys, or other credentials. A configured custom `rpc_key` is rejected rather than copied. The UI reports a stale/failed refresh after 90 seconds instead of silently displaying old configuration forever.
+A separate observation-helper boundary runs as container UID 0 solely because the selected production config may be `0600 root:root`. The production directory is mounted read-only. The helper uses host networking to run supported read-only `rnstatus --json` and `rnpath --table --json` queries directly against that directory, allowing Reticulum 1.5.7 to use the existing identity-derived or explicit RPC authentication in place. The helper drops all Linux capabilities, enables `no-new-privileges`, has a read-only root filesystem, is not privileged, and has no Docker socket.
 
-The observer image intentionally includes `rns==1.5.7` to provide the compatible `rnstatus` and `rnpath` read-only utilities. The generated RNS client config contains no configured interfaces and sets Transport off. It does not start `rnsd`, import or construct an independent Reticulum instance, or use the packaged utilities for management. Both utilities are invoked only against the selected configuration in shared-instance-required operation; failed attachment is reported as **Unavailable**. CI executes live shared-instance attachment inside both AMD64 and ARM64 images and verifies that the running observer contains no `rnsd` process.
+Every 30 seconds the helper atomically replaces `config-view.json`, `runtime-status.json`, `paths.json`, and `refresh-status.json`. Output is normalized and bounded, and contains presentation fields, counters, path rows, IFAC presence booleans, source metadata, and collection times only. It never publishes the raw config, `rpc_key`, identities/private keys, IFAC/network keys, passphrases, or other credentials. Failed authentication or collection marks the refresh failed while preserving the last complete snapshots; the UI reports **Unavailable** or **Stale** instead of treating old data as current.
+
+The image intentionally includes `rns==1.5.7` for compatible utilities. Only the helper invokes them in the protected Docker architecture. The web process never invokes `rnstatus`, `rnpath`, or `rnsd`. CI exercises identity-derived RPC authentication on AMD64 and ARM64, explicit `rpc_key` authentication on AMD64, and verifies that neither helper nor web starts `rnsd`.
 
 ## Path-flood visibility
 
@@ -99,7 +101,7 @@ Development begins on `verification/v0.1.0-observer`. Do not merge, tag, or rele
 ## Known v0.1.0 limitations
 
 - Exact runtime fields vary by Reticulum version; unsupported values are shown as **Unavailable**.
-- Shared-instance reachability from a container depends on the host deployment and IPC/network arrangement.
+- Shared-instance reachability from the helper depends on the host deployment and IPC/network arrangement; failure is reported without fallback.
 - Docker detection is best-effort and read-only; the web container itself intentionally has no Docker socket.
 - systemd/process ownership is evidence, not authority to manage the service.
 - No config writes, recovery actions, path drops, queue drops, reloads, or restarts exist yet.

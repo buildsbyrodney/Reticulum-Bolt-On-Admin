@@ -9,7 +9,7 @@ from typing import Any
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from .backend import ReticulumBackend, SharedInstanceBackend
+from .backend import ReticulumBackend, SharedInstanceBackend, SnapshotBackend
 from .detection import detect
 from .parsers import bounded_paths, merge_interfaces, path_health
 from .storage import ObserverStore
@@ -26,9 +26,11 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     if config: app.config.update(config)
     store = ObserverStore(Path(app.config["DATABASE"]))
     selected = Path(app.config["RETICULUM_CONFIG"]) if app.config.get("RETICULUM_CONFIG") else None
-    snapshot_path = Path(os.environ["BOLT_ON_CONFIG_SNAPSHOT"]) if os.environ.get("BOLT_ON_CONFIG_SNAPSHOT") else None
-    adapter = backend or SharedInstanceBackend(selected, snapshot_path=snapshot_path,
-                                               snapshot_max_age=int(os.environ.get("BOLT_ON_CONFIG_MAX_AGE", "90")))
+    snapshot_dir = Path(os.environ["BOLT_ON_SNAPSHOT_DIR"]) if os.environ.get("BOLT_ON_SNAPSHOT_DIR") else None
+    adapter = backend or (
+        SnapshotBackend(snapshot_dir, snapshot_max_age=int(os.environ.get("BOLT_ON_CONFIG_MAX_AGE", "90")))
+        if snapshot_dir else SharedInstanceBackend(selected)
+    )
     app.extensions["observer_store"] = store
     app.extensions["reticulum_backend"] = adapter
 
@@ -64,7 +66,7 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         for path in paths:
             path["destination_label"] = labels.get(("destination", path["destination"]))
             path["transport_label"] = labels.get(("transport", path["via"]))
-        health = path_health(paths, labels)
+        health = path_health(paths, labels, total_count=runtime.path_count if runtime else None)
         clients = runtime.clients if runtime else []
         snapshot = {"interfaces": [row["name"] for row in interfaces if row.get("runtime")], "clients": [row["key"] for row in clients], "path_count": len(paths)}
         if runtime: store.record_observation(health, snapshot)
@@ -112,7 +114,10 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     @app.get("/paths")
     @login_required
     def paths():
-        model = observe(); raw, omitted = bounded_paths(model["paths"]); model.update(raw_paths=raw, omitted_paths=omitted)
+        model = observe(); raw, omitted = bounded_paths(model["paths"])
+        if model["runtime"] and model["runtime"].path_count is not None:
+            omitted = max(omitted, model["runtime"].path_count - len(raw))
+        model.update(raw_paths=raw, omitted_paths=omitted)
         return render_template("paths.html", **model)
 
     @app.get("/clients")

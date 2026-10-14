@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .detection import detect
-from .models import DetectionResult, RuntimeSnapshot
+from .models import DetectionResult, InstallationCandidate, RuntimeSnapshot
 from .parsers import find_interfaces, normalize_paths, parse_config_interfaces, proven_clients
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -98,7 +98,8 @@ class SharedInstanceBackend(ReticulumBackend):
         if isinstance(status, dict) and transport is None and "transport_id" in status:
             transport = bool(status.get("transport_id"))
         self._snapshot = RuntimeSnapshot(True, True, version, transport, runtime_interfaces, paths,
-                                         proven_clients(runtime_interfaces, configured), path_error)
+                                         proven_clients(runtime_interfaces, configured), path_error,
+                                         path_count=len(paths), paths_truncated=False)
         return self._snapshot
 
     def _current(self) -> RuntimeSnapshot:
@@ -134,6 +135,114 @@ class SharedInstanceBackend(ReticulumBackend):
             return {"available": True, "path": str(self.config_path), "sections": sections, "interfaces": interfaces}
         except OSError as error:
             return {"available": False, "error": str(error), "sections": {}, "interfaces": []}
+
+    def capabilities(self) -> dict[str, bool]:
+        return {"observe": True, "labels": True, "drop_path": False, "drop_via": False, "drop_announces": False,
+                "reload_interface": False, "edit_config": False, "restart_service": False, "transport_enable": False}
+
+
+class SnapshotBackend(ReticulumBackend):
+    """Credential-free adapter for snapshots published by the root helper."""
+
+    def __init__(self, snapshot_dir: Path, snapshot_max_age: int = 90):
+        self.snapshot_dir = snapshot_dir
+        self.snapshot_max_age = snapshot_max_age
+        self._snapshot: RuntimeSnapshot | None = None
+
+    def _read(self, name: str) -> dict[str, Any] | None:
+        try:
+            value = json.loads((self.snapshot_dir / name).read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _refresh(self) -> tuple[dict[str, Any] | None, bool, str | None]:
+        refresh = self._read("refresh-status.json")
+        if not refresh:
+            return None, True, "Observation helper status is unavailable"
+        checked_at = int(refresh.get("checked_at") or 0)
+        stale = not refresh.get("ok") or not checked_at or time.time() - checked_at > self.snapshot_max_age
+        error = refresh.get("error")
+        if stale and not error:
+            error = "Observation helper has not checked in recently"
+        return refresh, stale, error
+
+    def detect(self) -> DetectionResult:
+        config = self._read("config-view.json")
+        if not config:
+            return DetectionResult(message="Sanitized observer configuration is unavailable.")
+        source = config.get("source") or {}
+        runtime = self._read("runtime-status.json") or {}
+        _, stale, _ = self._refresh()
+        candidate = InstallationCandidate(
+            config_path=Path(source.get("config_path") or "Unavailable"),
+            storage_path=Path(source["storage_path"]) if source.get("storage_path") else None,
+            deployment_type=config.get("deployment_type") or "external",
+            service_manager="external/docker" if config.get("deployment_type") == "docker" else "external",
+            rns_version=runtime.get("rns_version"),
+            rnsd_running=None if stale else runtime.get("running"),
+            shared_instance_available=False if stale else runtime.get("available"),
+            evidence=("sanitized observation-helper snapshot",),
+        )
+        return DetectionResult(candidates=(candidate,), selected=candidate,
+                               message="Existing Reticulum installation selected through the read-only observation helper.")
+
+    def runtime_status(self) -> RuntimeSnapshot:
+        refresh, stale, error = self._refresh()
+        if stale:
+            self._snapshot = RuntimeSnapshot(available=False, running=None, error=error or "Observation unavailable")
+            return self._snapshot
+        runtime = self._read("runtime-status.json")
+        paths = self._read("paths.json")
+        config = self._read("config-view.json")
+        if not runtime or not paths or not config:
+            self._snapshot = RuntimeSnapshot(available=False, running=None, error="Sanitized observation snapshot is incomplete")
+            return self._snapshot
+        generation = int(refresh.get("checked_at") or 0) if refresh else 0
+        if any(int(item.get(key) or 0) != generation for item, key in (
+            (runtime, "collected_at"), (paths, "collected_at"), (config, "refreshed_at")
+        )):
+            self._snapshot = RuntimeSnapshot(available=False, running=None, error="Sanitized observation snapshot generation mismatch")
+            return self._snapshot
+        self._snapshot = RuntimeSnapshot(
+            available=bool(runtime.get("available")),
+            running=runtime.get("running"),
+            rns_version=runtime.get("rns_version"),
+            transport_enabled=runtime.get("transport_enabled"),
+            interfaces=runtime.get("interfaces") or [],
+            paths=paths.get("rows") or [],
+            clients=runtime.get("clients") or [],
+            error=None,
+            path_count=int(paths.get("total_count") or len(paths.get("rows") or [])),
+            paths_truncated=bool(paths.get("truncated")),
+        )
+        return self._snapshot
+
+    def _current(self) -> RuntimeSnapshot:
+        return self._snapshot or self.runtime_status()
+
+    def paths(self) -> list[dict[str, Any]]: return self._current().paths
+    def interfaces(self) -> list[dict[str, Any]]: return self._current().interfaces
+    def clients(self) -> list[dict[str, Any]]: return self._current().clients
+
+    def config_view(self) -> dict[str, Any]:
+        config = self._read("config-view.json")
+        refresh, stale, error = self._refresh()
+        if not config:
+            return {"available": False, "error": "Sanitized configuration snapshot is unavailable", "sections": {}, "interfaces": [], "stale": True}
+        source = config.get("source") or {}
+        return {
+            "available": True,
+            "path": source.get("config_path"),
+            "sections": {"reticulum": {"enable_transport": config.get("transport_enabled")}},
+            "interfaces": config.get("interfaces") or [],
+            "sanitized": True,
+            "storage_readable": config.get("storage_readable_at_refresh"),
+            "stale": stale,
+            "refresh_error": error,
+            "refreshed_at": config.get("refreshed_at"),
+            "checked_at": int(refresh.get("checked_at") or 0) if refresh else 0,
+        }
 
     def capabilities(self) -> dict[str, bool]:
         return {"observe": True, "labels": True, "drop_path": False, "drop_via": False, "drop_announces": False,

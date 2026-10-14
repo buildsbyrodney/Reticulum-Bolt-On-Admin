@@ -15,11 +15,13 @@ def test_compose_is_read_only_and_has_no_docker_socket_or_rnsd():
     assert "privileged:" not in text
     assert "rnsd:" not in text
     observer=text.split("  observer:", 1)[1]
-    assert "RETICULUM_CONFIG: /observer-data/rns/config" in observer
+    assert "BOLT_ON_SNAPSHOT_DIR: /observer-data" in observer
+    assert "RETICULUM_CONFIG:" not in observer
     assert "/source" not in observer and "/reticulum" not in observer
-    sanitizer=text.split("  sanitizer:", 1)[1].split("  observer:", 1)[0]
-    assert 'user: "0:0"' in sanitizer and "network_mode: none" in sanitizer
-    assert 'cap_drop: ["ALL"]' in sanitizer and "/source:ro" in sanitizer
+    helper=text.split("  observation-helper:", 1)[1].split("  observer:", 1)[0]
+    assert 'user: "0:0"' in helper and "network_mode: host" in helper
+    assert 'cap_drop: ["ALL"]' in helper and "/source:ro" in helper
+    assert "no-new-privileges:true" in helper and "read_only: true" in helper
 
 
 def test_installer_stops_on_ambiguity_and_never_manages_reticulum():

@@ -33,9 +33,9 @@ OBSERVER_DATA="$STATE_DIR/observer-input"
 GUI_STATE="$STATE_DIR/gui"
 if ((PREPARE_DOCKER == 1)); then
   install -d -m 0755 "$STATE_DIR" "$OBSERVER_DATA"
-  PYTHONPATH="$SCRIPT_DIR/src" "$PYTHON_BIN" -m reticulum_bolt_on.sanitizer --source "$CONFIG" --output-dir "$OBSERVER_DATA" --source-display-path "$CONFIG" --storage-display-path "$(dirname "$CONFIG")/storage" --deployment-type docker
+  PYTHONPATH="$SCRIPT_DIR/src" "$PYTHON_BIN" -m reticulum_bolt_on.sanitizer --source "$CONFIG" --output-dir "$OBSERVER_DATA" --source-display-path "$CONFIG" --storage-display-path "$(dirname "$CONFIG")/storage" --deployment-type docker --config-only
   install -d -o 10001 -g 10001 -m 0700 "$GUI_STATE"
-  echo "Sanitized observer data prepared at $OBSERVER_DATA."
+  echo "Sanitized config view prepared at $OBSERVER_DATA; the read-only observation helper will collect runtime state."
   echo "GUI state prepared at $GUI_STATE for container UID 10001."
   echo "The production Reticulum configuration was read but not modified."
   exit 0

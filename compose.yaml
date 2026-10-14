@@ -1,8 +1,8 @@
 services:
-  sanitizer:
+  observation-helper:
     build: .
     user: "0:0"
-    network_mode: none
+    network_mode: host
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -35,15 +35,15 @@ services:
     environment:
       BOLT_ON_SECRET_KEY: "${BOLT_ON_SECRET_KEY:?set BOLT_ON_SECRET_KEY}"
       BOLT_ON_DATABASE: /state/observer.db
-      RETICULUM_CONFIG: /observer-data/rns/config
-      BOLT_ON_CONFIG_SNAPSHOT: /observer-data/config-view.json
+      BOLT_ON_SNAPSHOT_DIR: /observer-data
     volumes:
       - "${BOLT_ON_OBSERVER_DATA:-./observer-data}:/observer-data:ro"
       - "${BOLT_ON_STATE:-./state}:/state"
-    depends_on: [sanitizer]
+    depends_on: [observation-helper]
     restart: unless-stopped
-# The root sanitizer has no network or capabilities and only performs a one-way
-# read-only production-config to sanitized-data transformation. The web
-# container remains non-root and never receives the production mount.
+# The root helper has host networking only to perform authenticated read-only
+# rnstatus/rnpath queries. It has no capabilities and performs a one-way
+# production-data to sanitized-JSON transformation. The web container remains
+# non-root and never receives the production mount, identity or RPC key.
 # Deliberately absent: privileged mode, Docker socket, Reticulum/rnsd service.
 
