@@ -57,12 +57,17 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         runtime_interfaces = runtime.interfaces if runtime else []
         interfaces = merge_interfaces(config_view.get("interfaces", []), runtime_interfaces)
         paths = runtime.paths if runtime else []
-        health = path_health(paths, store.labels())
+        labels = store.labels()
+        for interface in interfaces: interface["admin_label"] = labels.get(("interface", interface["name"]))
+        for path in paths:
+            path["destination_label"] = labels.get(("destination", path["destination"]))
+            path["transport_label"] = labels.get(("transport", path["via"]))
+        health = path_health(paths, labels)
         clients = runtime.clients if runtime else []
         snapshot = {"interfaces": [row["name"] for row in interfaces if row.get("runtime")], "clients": [row["key"] for row in clients], "path_count": len(paths)}
         if runtime: store.record_observation(health, snapshot)
         return {"detection": detection, "runtime": runtime, "config": config_view, "interfaces": interfaces,
-                "paths": paths, "health": health, "clients": clients, "capabilities": adapter.capabilities()}
+                "paths": paths, "health": health, "clients": clients, "labels": labels, "capabilities": adapter.capabilities()}
 
     @app.context_processor
     def common(): return {"observer_mode": True, "capabilities": adapter.capabilities()}
