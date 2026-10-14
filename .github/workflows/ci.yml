@@ -51,5 +51,5 @@ jobs:
             test "$attempt" -lt 20
             sleep 1
           done
-          docker exec "$container_id" python -c 'import pathlib; processes=[p.read_bytes().replace(b"\0",b" ").decode("utf-8","ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")]; offenders=[p for p in processes if p.split() and pathlib.Path(p.split()[0]).name == "rnsd"]; assert not offenders, offenders'
+          docker exec "$container_id" python -c 'import pathlib; processes=[p.read_bytes().replace(b"\0",b" ").decode("utf-8","ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")]; offenders=[p for p in processes if any(pathlib.Path(token).name == "rnsd" for token in p.split())]; assert not offenders, offenders'
 
