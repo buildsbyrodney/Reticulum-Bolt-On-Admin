@@ -1,0 +1,19 @@
+services:
+  observer:
+    build: .
+    network_mode: host
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    tmpfs: ["/tmp"]
+    environment:
+      BOLT_ON_SECRET_KEY: "${BOLT_ON_SECRET_KEY:?set BOLT_ON_SECRET_KEY}"
+      BOLT_ON_DATABASE: /state/observer.db
+      RETICULUM_CONFIG: /reticulum/config
+    volumes:
+      - "${RETICULUM_DIR:?set RETICULUM_DIR}:/reticulum:ro"
+      - "${BOLT_ON_STATE:-./state}:/state"
+    restart: unless-stopped
+# Deliberately absent: privileged mode, Docker socket, Reticulum/rnsd service.
+
+

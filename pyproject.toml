@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reticulum-bolt-on-admin"
+version = "0.1.0"
+description = "A conservative observer-first web admin for existing Reticulum installations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["Flask>=3.1,<4", "gunicorn>=23,<24"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-cov>=5,<8"]
+
+[project.scripts]
+reticulum-bolt-on-admin = "reticulum_bolt_on.app:main"
+reticulum-bolt-on-detect = "reticulum_bolt_on.detection:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reticulum_bolt_on = ["templates/*.html", "static/*.css", "static/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+

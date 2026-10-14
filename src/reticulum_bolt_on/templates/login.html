@@ -1,0 +1,3 @@
+{% extends 'base.html' %}{% block content %}<section class="card narrow"><h1>Administrator sign in</h1><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Username<input name="username" required autocomplete="username"></label><label>Password<input type="password" name="password" required autocomplete="current-password"></label><button>Sign in</button></form></section>{% endblock %}
+
+

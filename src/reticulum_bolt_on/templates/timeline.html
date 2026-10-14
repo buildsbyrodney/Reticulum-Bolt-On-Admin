@@ -1,0 +1,3 @@
+{% extends 'base.html' %}{% block content %}<h1>Timeline and bounded history</h1><section class="card"><h2>Events</h2>{% for e in events %}<p><time>{{ e.occurred_at }}</time> <b>{{ e.kind }}</b> — {{ e.message }}</p>{% else %}<p>No events recorded.</p>{% endfor %}</section><section class="card"><h2>Path observations</h2><div class="table-wrap"><table><tr><th>Timestamp</th><th>Total</th><th>Unique via</th><th>Top via</th><th>Top count</th></tr>{% for h in history %}<tr><td>{{ h.observed_at }}</td><td>{{ h.total_paths }}</td><td>{{ h.unique_vias }}</td><td><code>{{ h.top_via or 'Unavailable' }}</code></td><td>{{ h.top_count }}</td></tr>{% endfor %}</table></div></section>{% endblock %}
+
+
