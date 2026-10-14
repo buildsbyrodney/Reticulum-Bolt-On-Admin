@@ -14,6 +14,12 @@ def test_compose_is_read_only_and_has_no_docker_socket_or_rnsd():
     assert "/var/run/docker.sock" not in text
     assert "privileged:" not in text
     assert "rnsd:" not in text
+    observer=text.split("  observer:", 1)[1]
+    assert "RETICULUM_CONFIG: /observer-data/rns/config" in observer
+    assert "/source" not in observer and "/reticulum" not in observer
+    sanitizer=text.split("  sanitizer:", 1)[1].split("  observer:", 1)[0]
+    assert 'user: "0:0"' in sanitizer and "network_mode: none" in sanitizer
+    assert 'cap_drop: ["ALL"]' in sanitizer and "/source:ro" in sanitizer
 
 
 def test_installer_stops_on_ambiguity_and_never_manages_reticulum():

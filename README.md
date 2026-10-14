@@ -42,7 +42,7 @@ Supported observation targets:
 - host-native Python Reticulum;
 - `rnsd` managed by systemd;
 - manually launched `rnsd` / shared instance;
-- Docker-hosted Reticulum when its config is mounted read-only and its shared instance is reachable.
+- Docker-hosted Reticulum when the isolated sanitizer can read its config through a read-only mount and its shared instance is reachable. The web container never receives that mount.
 
 Process-manager and Docker detection are evidence only. The backend abstraction is lifecycle-neutral: `ReticulumBackend` exposes `detect()`, `runtime_status()`, `paths()`, `interfaces()`, `clients()`, `config_view()`, and `capabilities()`.
 
@@ -61,13 +61,19 @@ The installer displays the detected config, storage candidate, shared-instance r
 ```sh
 export RETICULUM_DIR="$HOME/.reticulum"
 export BOLT_ON_STATE="./state"
+export BOLT_ON_OBSERVER_DATA="./observer-data"
 export BOLT_ON_SECRET_KEY="$(openssl rand -hex 32)"
+sudo STATE_DIR="$(pwd)/bolt-on-data" ./install.sh --config "$RETICULUM_DIR/config" --prepare-docker
+export BOLT_ON_STATE="$(pwd)/bolt-on-data/gui"
+export BOLT_ON_OBSERVER_DATA="$(pwd)/bolt-on-data/observer-input"
 docker compose up --build
 ```
 
-The container is unprivileged, drops all capabilities, has a read-only root filesystem, does not mount the Docker socket, and mounts the selected Reticulum directory read-only. Host networking is used only so supported shared-instance IPC can be reachable. Reticulum itself does not need to be containerized.
+The web container is non-root, drops all capabilities, has a read-only root filesystem, and has no Docker socket or production Reticulum mount. Host networking is used only so the existing shared instance can be reached. Reticulum itself does not need to be containerized.
 
-The observer image intentionally includes `rns==1.5.7` to provide the compatible `rnstatus` and `rnpath` read-only utilities. It does not start `rnsd`, import or construct an independent Reticulum instance, or use the packaged utilities for management. Both utilities are invoked only against the selected configuration in shared-instance-required operation; failed attachment is reported as **Unavailable**. CI executes `rnstatus --version` and `rnpath --help` inside both AMD64 and ARM64 images and verifies that the running observer contains no `rnsd` process.
+A separate sanitizer boundary runs as container UID 0 solely to read a root-owned production directory mounted read-only. It has no network, no Linux capabilities, a read-only root filesystem, and no Docker socket. Every 30 seconds it atomically refreshes GUI-owned data containing only the minimum shared-instance settings (`instance_name` or configured shared/control ports), Transport state, interface presentation fields, source hash, and safe diagnostics. It never copies interface sections into the RNS client config, and never copies IFAC material, passphrases, identities, private keys, or other credentials. A configured custom `rpc_key` is rejected rather than copied. The UI reports a stale/failed refresh after 90 seconds instead of silently displaying old configuration forever.
+
+The observer image intentionally includes `rns==1.5.7` to provide the compatible `rnstatus` and `rnpath` read-only utilities. The generated RNS client config contains no configured interfaces and sets Transport off. It does not start `rnsd`, import or construct an independent Reticulum instance, or use the packaged utilities for management. Both utilities are invoked only against the selected configuration in shared-instance-required operation; failed attachment is reported as **Unavailable**. CI executes live shared-instance attachment inside both AMD64 and ARM64 images and verifies that the running observer contains no `rnsd` process.
 
 ## Path-flood visibility
 

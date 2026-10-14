@@ -26,7 +26,9 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     if config: app.config.update(config)
     store = ObserverStore(Path(app.config["DATABASE"]))
     selected = Path(app.config["RETICULUM_CONFIG"]) if app.config.get("RETICULUM_CONFIG") else None
-    adapter = backend or SharedInstanceBackend(selected)
+    snapshot_path = Path(os.environ["BOLT_ON_CONFIG_SNAPSHOT"]) if os.environ.get("BOLT_ON_CONFIG_SNAPSHOT") else None
+    adapter = backend or SharedInstanceBackend(selected, snapshot_path=snapshot_path,
+                                               snapshot_max_age=int(os.environ.get("BOLT_ON_CONFIG_MAX_AGE", "90")))
     app.extensions["observer_store"] = store
     app.extensions["reticulum_backend"] = adapter
 

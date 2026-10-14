@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 import subprocess
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,14 +46,35 @@ class SharedInstanceBackend(ReticulumBackend):
     It never imports/constructs ``RNS.Reticulum`` because construction can
     initialise a local instance. A failed shared-instance query stays failed.
     """
-    def __init__(self, config_path: Path | None = None, runner: Runner = command_runner, detector=detect):
+    def __init__(self, config_path: Path | None = None, runner: Runner = command_runner, detector=detect,
+                 snapshot_path: Path | None = None, snapshot_max_age: int = 90):
         self.config_path = config_path
         self.runner = runner
         self.detector = detector
+        self.snapshot_path = snapshot_path
+        self.snapshot_max_age = snapshot_max_age
         self._snapshot: RuntimeSnapshot | None = None
 
     def detect(self) -> DetectionResult:
-        return self.detector(selected_config=self.config_path)
+        result = self.detector(selected_config=self.config_path)
+        snapshot = self._sanitized_snapshot()
+        if not snapshot or not result.selected:
+            return result
+        source = snapshot.get("source") or {}
+        selected = replace(result.selected,
+            config_path=Path(source.get("config_path") or result.selected.config_path),
+            storage_path=Path(source["storage_path"]) if source.get("storage_path") else None,
+            deployment_type=snapshot.get("deployment_type") or result.selected.deployment_type,
+            service_manager="external/docker" if snapshot.get("deployment_type") == "docker" else result.selected.service_manager)
+        return replace(result, candidates=(selected,), selected=selected)
+
+    def _sanitized_snapshot(self) -> dict[str, Any] | None:
+        if not self.snapshot_path:
+            return None
+        try:
+            return json.loads(self.snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
 
     def _run_json(self, command: list[str]) -> tuple[Any | None, str | None]:
         try: result = self.runner(command)
@@ -72,6 +95,8 @@ class SharedInstanceBackend(ReticulumBackend):
         paths = normalize_paths(path_data) if path_data is not None else []
         version = status.get("rns_version") or status.get("version") if isinstance(status, dict) else None
         transport = status.get("transport_enabled") if isinstance(status, dict) else None
+        if isinstance(status, dict) and transport is None and "transport_id" in status:
+            transport = bool(status.get("transport_id"))
         self._snapshot = RuntimeSnapshot(True, True, version, transport, runtime_interfaces, paths,
                                          proven_clients(runtime_interfaces, configured), path_error)
         return self._snapshot
@@ -84,6 +109,19 @@ class SharedInstanceBackend(ReticulumBackend):
     def clients(self) -> list[dict[str, Any]]: return self._current().clients
 
     def config_view(self) -> dict[str, Any]:
+        snapshot = self._sanitized_snapshot()
+        if snapshot is not None:
+            status_path = self.snapshot_path.with_name("refresh-status.json") if self.snapshot_path else None
+            try: refresh = json.loads(status_path.read_text(encoding="utf-8")) if status_path else {}
+            except (OSError, json.JSONDecodeError): refresh = {"ok": False, "error": "Sanitized config refresh status is unavailable"}
+            checked_at = int(refresh.get("checked_at") or 0)
+            stale = not refresh.get("ok") or refresh.get("source_sha256") != (snapshot.get("source") or {}).get("sha256")
+            if checked_at and time.time() - checked_at > self.snapshot_max_age: stale = True
+            return {"available": True, "path": (snapshot.get("source") or {}).get("config_path"),
+                    "sections": {"reticulum": {"enable_transport": snapshot.get("transport_enabled")}},
+                    "interfaces": snapshot.get("interfaces") or [], "sanitized": True,
+                    "storage_readable": snapshot.get("storage_readable_at_refresh"), "stale": stale,
+                    "refresh_error": refresh.get("error"), "refreshed_at": snapshot.get("refreshed_at"), "checked_at": checked_at}
         if not self.config_path: return {"available": False, "error": "No configuration selected", "sections": {}, "interfaces": []}
         try:
             sections, interfaces = parse_config_interfaces(self.config_path.read_text(encoding="utf-8", errors="replace"))

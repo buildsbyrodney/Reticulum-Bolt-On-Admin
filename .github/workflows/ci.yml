@@ -44,12 +44,5 @@ jobs:
           docker run --rm --platform "$PLATFORM" "$IMAGE" rnstatus --version
           docker run --rm --platform "$PLATFORM" "$IMAGE" rnpath --help
           test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = "observer"
-          container_id=$(docker run -d --platform "$PLATFORM" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid --tmpfs /state:rw,noexec,nosuid,mode=1777 -e BOLT_ON_SECRET_KEY=ci-only-secret -e RETICULUM_CONFIG=/reticulum/config -v "$PWD/tests/fixtures/docker-reticulum:/reticulum:ro" "$IMAGE")
-          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          for attempt in $(seq 1 20); do
-            docker exec "$container_id" python -c 'import pathlib; raise SystemExit(0 if any("gunicorn" in p.read_bytes().decode("utf-8", "ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")) else 1)' && break
-            test "$attempt" -lt 20
-            sleep 1
-          done
-          docker exec "$container_id" python -c 'import pathlib; processes=[p.read_bytes().replace(b"\0",b" ").decode("utf-8","ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")]; offenders=[p for p in processes if any(pathlib.Path(token).name == "rnsd" for token in p.split())]; assert not offenders, offenders'
+          bash tests/test_docker_sanitized_runtime.sh "$IMAGE" "$PLATFORM"
 

@@ -1,4 +1,30 @@
 services:
+  sanitizer:
+    build: .
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    tmpfs: ["/tmp"]
+    command:
+      - reticulum-bolt-on-sanitize
+      - --source
+      - /source/config
+      - --output-dir
+      - /observer-data
+      - --source-display-path
+      - "${RETICULUM_DIR:?set RETICULUM_DIR}/config"
+      - --storage-display-path
+      - "${RETICULUM_DIR:?set RETICULUM_DIR}/storage"
+      - --deployment-type
+      - docker
+      - --watch-seconds
+      - "30"
+    volumes:
+      - "${RETICULUM_DIR:?set RETICULUM_DIR}:/source:ro"
+      - "${BOLT_ON_OBSERVER_DATA:-./observer-data}:/observer-data"
+    restart: unless-stopped
   observer:
     build: .
     network_mode: host
@@ -9,10 +35,15 @@ services:
     environment:
       BOLT_ON_SECRET_KEY: "${BOLT_ON_SECRET_KEY:?set BOLT_ON_SECRET_KEY}"
       BOLT_ON_DATABASE: /state/observer.db
-      RETICULUM_CONFIG: /reticulum/config
+      RETICULUM_CONFIG: /observer-data/rns/config
+      BOLT_ON_CONFIG_SNAPSHOT: /observer-data/config-view.json
     volumes:
-      - "${RETICULUM_DIR:?set RETICULUM_DIR}:/reticulum:ro"
+      - "${BOLT_ON_OBSERVER_DATA:-./observer-data}:/observer-data:ro"
       - "${BOLT_ON_STATE:-./state}:/state"
+    depends_on: [sanitizer]
     restart: unless-stopped
+# The root sanitizer has no network or capabilities and only performs a one-way
+# read-only production-config to sanitized-data transformation. The web
+# container remains non-root and never receives the production mount.
 # Deliberately absent: privileged mode, Docker socket, Reticulum/rnsd service.
 
