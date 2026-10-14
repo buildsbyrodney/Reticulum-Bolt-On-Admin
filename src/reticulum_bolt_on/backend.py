@@ -11,6 +11,10 @@ from .models import DetectionResult, RuntimeSnapshot
 from .parsers import find_interfaces, normalize_paths, parse_config_interfaces, proven_clients
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+SENSITIVE_CONFIG_FIELDS = frozenset({
+    "ifac_key", "ifac_netkey", "ifac_netname", "ifac_passphrase",
+    "ifac_signature", "network_key", "network_name", "passphrase",
+})
 
 
 class ReticulumBackend(ABC):
@@ -86,7 +90,9 @@ class SharedInstanceBackend(ReticulumBackend):
             # Values are exposed for viewing, but IFAC credentials are redacted.
             for settings in sections.values():
                 for key in list(settings):
-                    if "ifac" in key or "pass" in key or "secret" in key: settings[key] = "[present, hidden]"
+                    lowered = key.lower()
+                    if lowered in SENSITIVE_CONFIG_FIELDS or "pass" in lowered or "secret" in lowered:
+                        settings[key] = "[present, hidden]"
             return {"available": True, "path": str(self.config_path), "sections": sections, "interfaces": interfaces}
         except OSError as error:
             return {"available": False, "error": str(error), "sections": {}, "interfaces": []}

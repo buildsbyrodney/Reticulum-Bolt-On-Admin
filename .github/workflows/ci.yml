@@ -18,12 +18,38 @@ jobs:
       - run: pytest --cov=reticulum_bolt_on --cov-report=term-missing
   container-architectures:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            tag: amd64
+          - platform: linux/arm64
+            tag: arm64
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: false
-          platforms: linux/amd64,linux/arm64
+          load: true
+          platforms: ${{ matrix.platform }}
+          tags: reticulum-bolt-on-admin:ci-${{ matrix.tag }}
+      - name: Validate Reticulum utilities and observer-only process
+        env:
+          IMAGE: reticulum-bolt-on-admin:ci-${{ matrix.tag }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker run --rm --platform "$PLATFORM" "$IMAGE" rnstatus --version
+          docker run --rm --platform "$PLATFORM" "$IMAGE" rnpath --help
+          test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = "observer"
+          container_id=$(docker run -d --platform "$PLATFORM" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid --tmpfs /state:rw,noexec,nosuid,mode=1777 -e BOLT_ON_SECRET_KEY=ci-only-secret -e RETICULUM_CONFIG=/reticulum/config -v "$PWD/tests/fixtures/docker-reticulum:/reticulum:ro" "$IMAGE")
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 20); do
+            docker exec "$container_id" python -c 'import pathlib; raise SystemExit(0 if any("gunicorn" in p.read_bytes().decode("utf-8", "ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")) else 1)' && break
+            test "$attempt" -lt 20
+            sleep 1
+          done
+          docker exec "$container_id" python -c 'import pathlib; processes=[p.read_bytes().replace(b"\0",b" ").decode("utf-8","ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")]; offenders=[p for p in processes if p.split() and pathlib.Path(p.split()[0]).name == "rnsd"]; assert not offenders, offenders'
 

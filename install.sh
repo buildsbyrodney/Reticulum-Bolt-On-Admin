@@ -7,7 +7,10 @@ CONFIG=""
 APPROVE=0
 while (($#)); do case "$1" in --config) CONFIG="$2"; shift 2;; --yes) APPROVE=1; shift;; *) echo "Unknown option: $1" >&2; exit 2;; esac; done
 
-command -v python3 >/dev/null || { echo "Python 3.10+ is required. Nothing was changed." >&2; exit 1; }
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+command -v "$PYTHON_BIN" >/dev/null || { echo "Python 3.10+ is required. Nothing was changed." >&2; exit 1; }
+"$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
+  || { echo "Python 3.10+ is required; the detected interpreter is too old. Nothing was changed." >&2; exit 1; }
 mapfile -t FOUND < <({ [[ -n "${RNS_CONFIG_DIR:-}" ]] && printf '%s\n' "$RNS_CONFIG_DIR/config"; printf '%s\n' "$HOME/.reticulum/config" "$HOME/.config/reticulum/config" /etc/reticulum/config /root/.reticulum/config; find /home -maxdepth 3 -type f -path '*/.reticulum/config' -print 2>/dev/null || true; } | awk '!seen[$0]++' | while read -r p; do [[ -r "$p" ]] && printf '%s\n' "$p"; done)
 
 if [[ -n "$CONFIG" ]]; then
@@ -25,10 +28,10 @@ echo "Reticulum config/storage will not be written. rnsd will not be started, st
 if ((APPROVE == 0)); then read -r -p "Install only the GUI and its private state directory? [y/N] " answer; [[ "$answer" =~ ^[Yy]$ ]] || { echo "Cancelled. Nothing was changed."; exit 0; }; fi
 
 install -d -m 0755 "$PREFIX" "$STATE_DIR"
-python3 -m venv "$PREFIX/venv"
+"$PYTHON_BIN" -m venv "$PREFIX/venv"
 "$PREFIX/venv/bin/pip" install .
 SECRET_FILE="$STATE_DIR/secret"
-if [[ ! -e "$SECRET_FILE" ]]; then umask 077; python3 -c 'import secrets; print(secrets.token_hex(32))' > "$SECRET_FILE"; fi
+if [[ ! -e "$SECRET_FILE" ]]; then umask 077; "$PYTHON_BIN" -c 'import secrets; print(secrets.token_hex(32))' > "$SECRET_FILE"; fi
 cat > "$PREFIX/run" <<EOF
 #!/usr/bin/env bash
 export BOLT_ON_SECRET_KEY="\$(cat '$SECRET_FILE')"

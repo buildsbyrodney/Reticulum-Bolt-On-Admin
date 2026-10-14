@@ -67,6 +67,8 @@ docker compose up --build
 
 The container is unprivileged, drops all capabilities, has a read-only root filesystem, does not mount the Docker socket, and mounts the selected Reticulum directory read-only. Host networking is used only so supported shared-instance IPC can be reachable. Reticulum itself does not need to be containerized.
 
+The observer image intentionally includes `rns==1.5.7` to provide the compatible `rnstatus` and `rnpath` read-only utilities. It does not start `rnsd`, import or construct an independent Reticulum instance, or use the packaged utilities for management. Both utilities are invoked only against the selected configuration in shared-instance-required operation; failed attachment is reported as **Unavailable**. CI executes `rnstatus --version` and `rnpath --help` inside both AMD64 and ARM64 images and verifies that the running observer contains no `rnsd` process.
+
 ## Path-flood visibility
 
 Paths are grouped strictly by the exact non-empty Reticulum `via` hash. Defaults are informational warnings, never automated mitigation:
@@ -86,7 +88,7 @@ pip install -e '.[test]'
 pytest
 ```
 
-Development begins on `verification/v0.1.0-observer`. Do not merge, tag, or release before review. CI runs Python regression tests and validates container builds for `linux/amd64` and `linux/arm64`.
+Development begins on `verification/v0.1.0-observer`. Do not merge, tag, or release before review. CI runs Python regression tests, builds and executes the container for `linux/amd64` and `linux/arm64`, validates both Reticulum utilities, and confirms that the observer starts without an `rnsd` process.
 
 ## Known v0.1.0 limitations
 

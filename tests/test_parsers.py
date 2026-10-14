@@ -1,4 +1,21 @@
-from reticulum_bolt_on.parsers import bounded_paths, find_interfaces, merge_interfaces, normalize_paths, path_health, proven_clients
+from pathlib import Path
+
+import pytest
+
+from reticulum_bolt_on.parsers import bounded_paths, find_interfaces, merge_interfaces, normalize_paths, parse_config_interfaces, path_health, proven_clients
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize(("fixture", "expected"), [
+    ("ifac_explicit.ini", True),
+    ("ifac_connection_fields.ini", True),
+    ("ifac_absent.ini", False),
+])
+def test_configured_ifac_detection(fixture, expected):
+    _, interfaces = parse_config_interfaces((FIXTURES / fixture).read_text())
+    assert interfaces[0]["ifac_present"] is expected
 
 
 def test_interface_and_proven_client_parsing():

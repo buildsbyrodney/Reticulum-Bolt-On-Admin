@@ -15,6 +15,10 @@ CONCENTRATION_MIN = 100
 CONCENTRATION_SHARE = 0.50
 SAMPLE_LIMIT = 5
 RAW_PATH_LIMIT = 500
+CONFIGURED_IFAC_FIELDS = frozenset({
+    "ifac_key", "ifac_netkey", "ifac_netname", "ifac_passphrase",
+    "ifac_signature", "ifac_size", "network_name", "passphrase",
+})
 
 
 def _value(item: dict[str, Any], *names: str) -> Any:
@@ -124,7 +128,7 @@ def parse_config_interfaces(text: str) -> tuple[dict[str, Any], list[dict[str, A
             if lowered == "type": current["type"] = value
             elif lowered in {"enabled", "interface_enabled"}: current["enabled"] = value.lower() in {"yes", "true", "1", "on"}
             elif lowered == "mode": current["mode"] = value
-            elif "ifac" in lowered: current["ifac_present"] = True
+            if lowered in CONFIGURED_IFAC_FIELDS: current["ifac_present"] = True
         elif section:
             sections[section][key.lower()] = value
     if current:
