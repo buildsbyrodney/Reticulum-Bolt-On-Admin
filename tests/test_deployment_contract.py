@@ -23,4 +23,3 @@ def test_observer_source_has_no_management_routes():
     source=(ROOT/"src/reticulum_bolt_on/app.py").read_text()
     for route in ("drop_path","drop_via","restart_service","edit_config"):
         assert f'@app.post("/{route}' not in source
-

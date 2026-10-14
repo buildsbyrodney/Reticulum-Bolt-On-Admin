@@ -1,3 +1,2 @@
 {% extends 'base.html' %}{% block content %}<h1>Conservative Network Map</h1><p>Only locally observed relationships are drawn. Search and filters do not infer identities.</p><section class="map-controls"><input id="search" placeholder="Search observed nodes"><label><input type="checkbox" data-kind="interface" checked> Interfaces</label><label><input type="checkbox" data-kind="client" checked> Clients</label><label><input type="checkbox" data-kind="path" checked> Paths</label></section><svg id="map" viewBox="0 0 1000 650" aria-label="Read-only Reticulum topology"></svg><p id="map-status"></p>{% endblock %}{% block scripts %}<script src="{{ url_for('static',filename='map.js') }}"></script>{% endblock %}
 
-

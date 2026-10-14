@@ -16,4 +16,3 @@ services:
     restart: unless-stopped
 # Deliberately absent: privileged mode, Docker socket, Reticulum/rnsd service.
 
-

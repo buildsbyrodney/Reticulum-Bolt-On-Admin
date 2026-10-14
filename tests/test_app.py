@@ -57,4 +57,3 @@ def test_auth_cookie_and_csrf(tmp_path):
     assert app.config["SESSION_COOKIE_HTTPONLY"] and app.config["SESSION_COOKIE_SAMESITE"]=="Lax"
     assert client.post("/labels",data={"kind":"interface","value":"LAN","label":"x"}).status_code==400
 
-

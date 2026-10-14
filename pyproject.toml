@@ -28,4 +28,3 @@ reticulum_bolt_on = ["templates/*.html", "static/*.css", "static/*.js"]
 testpaths = ["tests"]
 addopts = "-q"
 
-

@@ -40,4 +40,3 @@ chmod 0755 "$PREFIX/run"
 echo "GUI installed at $PREFIX. Start $PREFIX/run explicitly or create a GUI-only service after review."
 echo "No Reticulum files or services were modified."
 
-

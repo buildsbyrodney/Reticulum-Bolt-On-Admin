@@ -1,3 +1,2 @@
 {% extends 'base.html' %}{% block content %}<section class="card narrow"><h1>Set up the local administrator</h1><p>This account protects only the bolt-on GUI. It does not modify Reticulum.</p><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Username<input name="username" minlength="3" required autocomplete="username"></label><label>Strong password<input type="password" name="password" minlength="12" required autocomplete="new-password"></label><label>Confirm password<input type="password" name="confirmation" minlength="12" required></label><button>Create administrator</button></form></section>{% endblock %}
 
-

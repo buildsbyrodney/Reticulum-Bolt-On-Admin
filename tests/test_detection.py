@@ -55,4 +55,3 @@ def test_explicit_storage_path_is_read_only(tmp_path):
     assert result.selected.storage_path == tmp_path / "existing-data"
     assert not (tmp_path / "existing-data").exists()
 
-

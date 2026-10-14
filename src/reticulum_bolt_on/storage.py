@@ -58,4 +58,3 @@ class ObserverStore:
 
     def events(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as con: return [dict(row) for row in con.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))]
-

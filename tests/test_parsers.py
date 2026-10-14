@@ -42,4 +42,3 @@ def test_configured_and_runtime_sources_remain_distinct():
     assert rows[0]["configured"] and not rows[0]["runtime"]
     assert not rows[1]["configured"] and rows[1]["runtime"]
 
-

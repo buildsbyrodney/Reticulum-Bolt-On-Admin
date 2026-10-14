@@ -9,4 +9,3 @@ ENV BOLT_ON_DATABASE=/state/observer.db BOLT_ON_LISTEN=0.0.0.0
 EXPOSE 8080
 CMD ["gunicorn","-b","0.0.0.0:8080","reticulum_bolt_on.app:create_app()"]
 
-

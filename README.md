@@ -99,4 +99,3 @@ Development begins on `verification/v0.1.0-observer`. Do not merge, tag, or rele
 ## Provenance
 
 The defensive runtime normalization, exact-via grouping concepts, conservative TCP-child proof rules, mobile navigation pattern, and bounded map-settling concepts were adapted from the managed Admin GUI. Messaging, bot, KJV, Nomad hosting, managed `rnsd`, lifecycle controls, and ownership assumptions were not copied.
-

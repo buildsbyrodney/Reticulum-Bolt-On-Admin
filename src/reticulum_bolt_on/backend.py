@@ -95,4 +95,3 @@ class SharedInstanceBackend(ReticulumBackend):
         return {"observe": True, "labels": True, "drop_path": False, "drop_via": False, "drop_announces": False,
                 "reload_interface": False, "edit_config": False, "restart_service": False, "transport_enable": False}
 
-

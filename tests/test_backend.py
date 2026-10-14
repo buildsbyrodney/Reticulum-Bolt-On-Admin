@@ -33,4 +33,3 @@ def test_config_view_redacts_ifac_and_never_writes(tmp_path):
     assert config.read_bytes()==before
     assert SharedInstanceBackend(config).capabilities()["edit_config"] is False
 
-

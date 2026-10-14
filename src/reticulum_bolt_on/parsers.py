@@ -222,4 +222,3 @@ def path_health(paths: Iterable[dict[str, Any]], labels: dict[tuple[str, str], s
 
 def bounded_paths(paths: list[dict[str, Any]], limit: int = RAW_PATH_LIMIT) -> tuple[list[dict[str, Any]], int]:
     return paths[:limit], max(0, len(paths) - limit)
-

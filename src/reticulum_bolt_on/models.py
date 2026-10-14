@@ -51,4 +51,3 @@ class RuntimeSnapshot:
     clients: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
 
-

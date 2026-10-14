@@ -3,4 +3,3 @@
 <main>{% for category,message in get_flashed_messages(with_categories=true) %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}{% block content %}{% endblock %}</main>
 <script>const t=document.querySelector('#nav-toggle'),n=document.querySelector('#nav');if(t)t.onclick=()=>{const o=n.classList.toggle('open');t.setAttribute('aria-expanded',o)};</script>{% block scripts %}{% endblock %}</body></html>
 
-

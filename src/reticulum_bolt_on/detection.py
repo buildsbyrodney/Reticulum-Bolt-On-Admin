@@ -122,4 +122,3 @@ def main() -> None:
     args = parser.parse_args()
     print(json.dumps(detect(selected_config=args.select).public(), indent=2))
 
-
