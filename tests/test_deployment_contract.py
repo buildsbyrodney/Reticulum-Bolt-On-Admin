@@ -96,6 +96,10 @@ def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path
         exit 1
     """))
     fake_python.chmod(0o755)
+    for utility in ("rnstatus", "rnpath"):
+        executable = fake_bin / utility
+        executable.write_text("#!/bin/sh\nexit 1\n")
+        executable.chmod(0o755)
     systemctl_log = tmp_path / "systemctl.log"
     fake_systemctl = fake_bin / "systemctl"
     fake_systemctl.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SYSTEMCTL_LOG\"\nexit 0\n")
@@ -129,7 +133,9 @@ def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path
     assert "Local URL: http://127.0.0.1:8080/" in result.stdout
     assert not sudo_marker.exists()
     assert all(path.stat().st_uid == os.geteuid() for path in home.rglob("*"))
-    assert "Refusing to run the Reticulum Bolt-On Admin web GUI as root" in (prefix / "run").read_text()
+    launcher = (prefix / "run").read_text()
+    assert "Refusing to run the Reticulum Bolt-On Admin web GUI as root" in launcher
+    assert f"export PATH={fake_bin}:\"$PATH\"" in launcher
 
 
 def test_observer_source_has_no_management_routes():

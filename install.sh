@@ -28,6 +28,23 @@ if ((EUID == 0 && PREPARE_DOCKER == 0)); then
   echo "Nothing was changed." >&2
   exit 1
 fi
+
+RNSTATUS_BIN=""
+RNPATH_BIN=""
+RNS_TOOL_PATH=""
+if ((PREPARE_DOCKER == 0)); then
+  RNSTATUS_BIN="$(command -v rnstatus || true)"
+  RNPATH_BIN="$(command -v rnpath || true)"
+  if [[ -z "$RNSTATUS_BIN" || -z "$RNPATH_BIN" ]]; then
+    echo "Native Observer Mode requires rnstatus and rnpath on the current user's PATH. Nothing was changed." >&2
+    echo "Install Reticulum for this user first; do not use sudo to run the GUI installer." >&2
+    exit 1
+  fi
+  RNS_TOOL_PATH="$(dirname "$RNSTATUS_BIN")"
+  if [[ "$(dirname "$RNPATH_BIN")" != "$RNS_TOOL_PATH" ]]; then
+    RNS_TOOL_PATH="$RNS_TOOL_PATH:$(dirname "$RNPATH_BIN")"
+  fi
+fi
 mapfile -t FOUND < <({ [[ -n "${RNS_CONFIG_DIR:-}" ]] && printf '%s\n' "$RNS_CONFIG_DIR/config"; printf '%s\n' "$HOME/.reticulum/config" "$HOME/.config/reticulum/config" /etc/reticulum/config /root/.reticulum/config; find /home -maxdepth 3 -type f -path '*/.reticulum/config' -print 2>/dev/null || true; } | awk '!seen[$0]++' | while read -r p; do [[ -r "$p" ]] && printf '%s\n' "$p"; done)
 
 if [[ -n "$CONFIG" ]]; then
@@ -44,7 +61,7 @@ fi
 
 echo "Existing Reticulum configuration: $CONFIG"
 echo "Storage candidate: $(dirname "$CONFIG")/storage"
-if command -v rnstatus >/dev/null && rnstatus --config "$(dirname "$CONFIG")" --json >/dev/null 2>&1; then echo "Shared instance: available"; else echo "Shared instance: unavailable (the GUI will report this; it will not start rnsd)"; fi
+if [[ -n "$RNSTATUS_BIN" ]] && "$RNSTATUS_BIN" --config "$(dirname "$CONFIG")" --json >/dev/null 2>&1; then echo "Shared instance: available"; else echo "Shared instance: unavailable (the GUI will report this; it will not start rnsd)"; fi
 command -v docker >/dev/null && echo "Docker: detected (not required and not modified)" || echo "Docker: not detected (native install will be used)"
 echo "Reticulum config/storage will not be written. rnsd will not be started, stopped, or restarted."
 if ((APPROVE == 0)); then read -r -p "Install only the GUI and its private state directory? [y/N] " answer; [[ "$answer" =~ ^[Yy]$ ]] || { echo "Cancelled. Nothing was changed."; exit 0; }; fi
@@ -83,6 +100,7 @@ printf -v SECRET_FILE_Q %q "$SECRET_FILE"
 printf -v DATABASE_Q %q "$GUI_STATE/observer.db"
 printf -v CONFIG_Q %q "$CONFIG"
 printf -v GUNICORN_Q %q "$PREFIX/venv/bin/gunicorn"
+printf -v RNS_TOOL_PATH_Q %q "$RNS_TOOL_PATH"
 cat > "$PREFIX/run" <<EOF
 #!/usr/bin/env bash
 if ((EUID == 0)); then
@@ -92,6 +110,7 @@ fi
 export BOLT_ON_SECRET_KEY="\$(cat $SECRET_FILE_Q)"
 export BOLT_ON_DATABASE=$DATABASE_Q
 export RETICULUM_CONFIG=$CONFIG_Q
+export PATH=$RNS_TOOL_PATH_Q:"\$PATH"
 exec $GUNICORN_Q -b 127.0.0.1:8080 'reticulum_bolt_on.app:create_app()'
 EOF
 chmod 0755 "$PREFIX/run"
