@@ -1,5 +1,10 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}Reticulum Bolt-On Admin{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}"></head>
-<body><header><a class="brand" href="{{ url_for('dashboard') }}">Reticulum Bolt-On Admin <b>Observer Mode</b></a>{% if session.admin %}<button id="nav-toggle" aria-controls="nav" aria-expanded="false">☰ Menu</button><nav id="nav"><a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('interfaces') }}">Interfaces</a><a href="{{ url_for('paths') }}">Paths</a><a href="{{ url_for('clients') }}">Clients</a><a href="{{ url_for('network_map') }}">Network Map</a><a href="{{ url_for('diagnostics') }}">Diagnostics</a><a href="{{ url_for('timeline') }}">Timeline</a><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>Sign out</button></form></nav>{% endif %}</header>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Reticulum Bolt-On Admin{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}"></head>
+<body><header><a class="brand" href="{{ url_for('dashboard') }}">Reticulum Bolt-On Admin <b>Observer Mode</b>{% if management_available %}<b class="management-badge">Management capability available</b>{% endif %}</a>
+{% if session.admin %}<button id="nav-toggle" aria-controls="nav" aria-expanded="false">☰ Menu</button><nav id="nav">
+<a href="{{ url_for('dashboard') }}">Dashboard</a><a href="{{ url_for('interfaces') }}">Interfaces</a><a href="{{ url_for('paths') }}">Paths</a><a href="{{ url_for('clients') }}">Clients</a><a href="{{ url_for('network_map') }}">Network Map</a><a href="{{ url_for('diagnostics') }}">Diagnostics</a><a href="{{ url_for('timeline') }}">Timeline</a><a href="{{ url_for('management') }}">Management</a>
+<form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>Sign out</button></form></nav>{% endif %}</header>
 <main>{% for category,message in get_flashed_messages(with_categories=true) %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}{% block content %}{% endblock %}</main>
 <script>const t=document.querySelector('#nav-toggle'),n=document.querySelector('#nav');if(t)t.onclick=()=>{const o=n.classList.toggle('open');t.setAttribute('aria-expanded',o)};</script>{% block scripts %}{% endblock %}</body></html>
-
