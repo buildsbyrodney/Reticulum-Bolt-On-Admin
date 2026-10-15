@@ -34,7 +34,9 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix(".tmp")
     temporary.write_text(json.dumps({"destinations": [item.hash.hex() for item in destinations]}), encoding="utf-8")
-    os.chmod(temporary, 0o600)
+    # Destination hashes are non-secret coordination data consumed by the CI
+    # controller outside this otherwise isolated container.
+    os.chmod(temporary, 0o644)
     os.replace(temporary, args.output)
 
     for destination in destinations:

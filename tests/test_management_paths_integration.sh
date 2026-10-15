@@ -23,6 +23,7 @@ diagnose() {
   for container in "${containers[@]}"; do
     if docker inspect "$container" >/dev/null 2>&1; then
       echo "--- diagnostic log: $container ---" >&2
+      docker inspect --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' "$container" >&2 || true
       docker logs --tail 80 "$container" >&2 || true
     fi
   done
@@ -47,7 +48,12 @@ printf '%s\n' \
   '  [[CI TCP Client B]]' '    type = TCPClientInterface' '    enabled = Yes' \
   '    target_host = 127.0.0.1' '    target_port = 43242' > "$root/production/config"
 chmod 0600 "$root/upstream-a/config" "$root/upstream-b/config" "$root/production/config"
-sudo chown -R root:root "$root"
+# The hardened rnsd containers run as uid 0 without DAC-bypass capabilities, so
+# only their private configuration trees are root-owned. Destination hashes are
+# non-secret test coordination data and remain readable by the CI controller.
+chmod 0711 "$root"
+chmod 0777 "$root/output-a" "$root/output-b"
+sudo chown -R root:root "$root/upstream-a" "$root/upstream-b" "$root/production"
 
 run_rnsd() {
   local name=$1 directory=$2
@@ -119,8 +125,8 @@ via_a=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); targets=set(sys.
 via_b=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); target=sys.argv[2]; print(next(r["via"] for r in d["paths"] if r.get("hash")==target))' "$initial" "$b1")
 python3 -c 'import re,sys; assert re.fullmatch(r"[0-9a-f]{32}",sys.argv[1]); assert re.fullmatch(r"[0-9a-f]{32}",sys.argv[2]); assert sys.argv[1] != sys.argv[2]' "$via_a" "$via_b"
 
-config_before=$(sha256sum "$root/production/config" | cut -d' ' -f1)
-storage_before=$(find "$root/production/storage" -type f -print0 | sort -z | xargs -0 -r sha256sum | sha256sum)
+config_before=$(sudo sha256sum "$root/production/config" | cut -d' ' -f1)
+storage_before=$(sudo find "$root/production/storage" -type f -exec sha256sum {} + | sort | sha256sum)
 pid_before=$(docker inspect "$production" --format '{{.State.Pid}}')
 started_before=$(docker inspect "$production" --format '{{.State.StartedAt}}')
 restart_before=$(docker inspect "$production" --format '{{.RestartCount}}')
@@ -138,8 +144,8 @@ wait_for_state absent "$a1" "$a2" "$a3"
 after_via=$(read_paths)
 python3 -c 'import json,sys; p={r.get("hash") for r in json.loads(sys.argv[1])["paths"]}; assert set(sys.argv[2:5]).isdisjoint(p); assert sys.argv[5] in p' "$after_via" "$a1" "$a2" "$a3" "$b1"
 
-test "$(sha256sum "$root/production/config" | cut -d' ' -f1)" = "$config_before"
-test "$(find "$root/production/storage" -type f -print0 | sort -z | xargs -0 -r sha256sum | sha256sum)" = "$storage_before"
+test "$(sudo sha256sum "$root/production/config" | cut -d' ' -f1)" = "$config_before"
+test "$(sudo find "$root/production/storage" -type f -exec sha256sum {} + | sort | sha256sum)" = "$storage_before"
 test "$(docker inspect "$production" --format '{{.State.Pid}}')" = "$pid_before"
 test "$(docker inspect "$production" --format '{{.State.StartedAt}}')" = "$started_before"
 test "$(docker inspect "$production" --format '{{.RestartCount}}')" = "$restart_before"
