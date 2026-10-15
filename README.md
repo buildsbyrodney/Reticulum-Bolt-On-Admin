@@ -47,6 +47,14 @@ RNS 1.5.7 per-interface attach/detach/reload is deliberately reported as disable
 
 Each attempt records a bounded GUI-local audit event containing timestamp, action, target, success/failure, and allow-listed non-secret metadata. No credentials or production configuration are copied into audit records.
 
+### Verification status
+
+- **Drop queued announces:** verified by automated regression/integration coverage and by the live native WSL canary against the already-running RNS 1.5.7 shared instance.
+- **Drop one destination path:** verified by automated regression coverage and an isolated deterministic integration topology using an existing controlled shared instance. It was not exercised by the live WSL canary because the upstream Internal client-access interface intentionally did not propagate the disposable peer's announce or requested path.
+- **Drop all paths via one transport:** verified by automated regression coverage and the same isolated deterministic integration topology, including preservation of paths learned through an unrelated exact `via`. It was not exercised by the live WSL canary for the same contained-topology reason.
+
+The live WSL result is a topology limitation, not a claim of live verification for path removal. The real Internal-mode client interface was not changed for testing.
+
 The current Docker/root-owned snapshot backend reports all management capabilities disabled. Its web container still receives no production config, identity, RPC credentials, IFAC secrets, or Docker socket. Extending the privileged helper is deferred until a narrowly scoped, authenticated request boundary is separately designed and tested.
 
 Management Mode does not provide arbitrary configuration editing, Transport enable/disable, `rnsd`/systemd/Docker restart, IFAC or identity changes, or firewall/network changes.

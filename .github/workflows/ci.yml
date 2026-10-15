@@ -45,4 +45,5 @@ jobs:
           docker run --rm --platform "$PLATFORM" "$IMAGE" rnpath --help
           test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = "observer"
           bash tests/test_docker_sanitized_runtime.sh "$IMAGE" "$PLATFORM"
+          bash tests/test_management_paths_integration.sh "$IMAGE" "$PLATFORM"
 
