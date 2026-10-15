@@ -144,7 +144,7 @@ via_b=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); target=sys.argv[
 python3 -c 'import re,sys; assert re.fullmatch(r"[0-9a-f]{32}",sys.argv[1]); assert re.fullmatch(r"[0-9a-f]{32}",sys.argv[2]); assert sys.argv[1] != sys.argv[2]' "$via_a" "$via_b"
 
 config_before=$(sudo sha256sum "$root/production/config" | cut -d' ' -f1)
-storage_before=$(sudo find "$root/production/storage" -type f -exec sha256sum {} + | sort | sha256sum)
+identity_before=$(sudo sha256sum "$root/production/storage/transport_identity" | cut -d' ' -f1)
 pid_before=$(docker inspect "$production" --format '{{.State.Pid}}')
 started_before=$(docker inspect "$production" --format '{{.State.StartedAt}}')
 restart_before=$(docker inspect "$production" --format '{{.RestartCount}}')
@@ -163,7 +163,10 @@ after_via=$(read_paths)
 python3 -c 'import json,sys; p={r.get("hash") for r in json.loads(sys.argv[1])["paths"]}; assert set(sys.argv[2:5]).isdisjoint(p); assert sys.argv[5] in p' "$after_via" "$a1" "$a2" "$a3" "$b1"
 
 test "$(sudo sha256sum "$root/production/config" | cut -d' ' -f1)" = "$config_before"
-test "$(sudo find "$root/production/storage" -type f -exec sha256sum {} + | sort | sha256sum)" = "$storage_before"
+# RNS itself rewrites volatile destination-table, packet-hash and announce-cache
+# files while this test intentionally learns, drops and relearns routes. The
+# management boundary must still preserve the long-lived transport identity.
+test "$(sudo sha256sum "$root/production/storage/transport_identity" | cut -d' ' -f1)" = "$identity_before"
 test "$(docker inspect "$production" --format '{{.State.Pid}}')" = "$pid_before"
 test "$(docker inspect "$production" --format '{{.State.StartedAt}}')" = "$started_before"
 test "$(docker inspect "$production" --format '{{.RestartCount}}')" = "$restart_before"
