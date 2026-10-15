@@ -18,6 +18,17 @@ cleanup() {
   case "$root" in /tmp/*|"${RUNNER_TEMP:-/nonexistent}"/*) sudo rm -rf -- "$root";; esac
 }
 trap cleanup EXIT
+diagnose() {
+  local status=$?
+  for container in "${containers[@]}"; do
+    if docker inspect "$container" >/dev/null 2>&1; then
+      echo "--- diagnostic log: $container ---" >&2
+      docker logs --tail 80 "$container" >&2 || true
+    fi
+  done
+  exit "$status"
+}
+trap diagnose ERR
 
 mkdir -p "$root/upstream-a" "$root/upstream-b" "$root/production" "$root/output-a" "$root/output-b"
 printf '%s\n' \
@@ -36,6 +47,7 @@ printf '%s\n' \
   '  [[CI TCP Client B]]' '    type = TCPClientInterface' '    enabled = Yes' \
   '    target_host = 127.0.0.1' '    target_port = 43242' > "$root/production/config"
 chmod 0600 "$root/upstream-a/config" "$root/upstream-b/config" "$root/production/config"
+sudo chown -R root:root "$root"
 
 run_rnsd() {
   local name=$1 directory=$2
