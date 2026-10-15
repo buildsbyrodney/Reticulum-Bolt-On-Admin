@@ -59,8 +59,20 @@ def _run_json(runner: Runner, command: list[str], label: str) -> Any:
         raise ObservationUnavailable(f"{label} failed with exit code {result.returncode}")
     try:
         return json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise ObservationUnavailable(f"{label} returned invalid JSON") from error
+    except json.JSONDecodeError as initial_error:
+        # RNS 1.5.7 can emit harmless startup notices before its requested JSON.
+        # Accept one complete trailing JSON value, but never publish the notices.
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(result.stdout):
+            if character not in "[{":
+                continue
+            try:
+                value, end = decoder.raw_decode(result.stdout[index:])
+            except json.JSONDecodeError:
+                continue
+            if not result.stdout[index + end:].strip():
+                return value
+        raise ObservationUnavailable(f"{label} returned invalid JSON") from initial_error
 
 
 def _rns_version(runner: Runner, status: Any) -> str | None:

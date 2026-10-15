@@ -4,7 +4,7 @@ import stat
 import subprocess
 
 from reticulum_bolt_on.backend import SnapshotBackend
-from reticulum_bolt_on.sanitizer import ObservationUnavailable, _write_failure, collect_observation, sanitize_config
+from reticulum_bolt_on.sanitizer import ObservationUnavailable, _run_json, _write_failure, collect_observation, sanitize_config
 
 
 PRODUCTION_CONFIG = """[reticulum]
@@ -38,6 +38,12 @@ def fake_runner(command):
     else:
         payload = {"paths": [{"hash": "b" * 32, "hops": 2, "via": "c" * 32, "interface": "Protected TCP"}]}
     return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+
+def test_rns_notice_prefix_is_not_copied_into_parsed_json():
+    def runner(command):
+        return subprocess.CompletedProcess(command, 0, "[Notice] attached to existing instance\n{\"interfaces\": []}\n", "")
+    assert _run_json(runner, ["rnstatus", "--json"], "status") == {"interfaces": []}
 
 
 def test_root_owned_style_observation_is_sanitized_without_source_changes(tmp_path):
