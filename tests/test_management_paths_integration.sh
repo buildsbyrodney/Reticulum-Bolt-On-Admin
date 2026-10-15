@@ -9,9 +9,11 @@ upstream_a=bolt-on-path-upstream-a-$suffix
 upstream_b=bolt-on-path-upstream-b-$suffix
 production=bolt-on-path-production-$suffix
 peer_a=bolt-on-path-peer-a-$suffix
+peer_a2=bolt-on-path-peer-a2-$suffix
+peer_a3=bolt-on-path-peer-a3-$suffix
 peer_b=bolt-on-path-peer-b-$suffix
 manager=bolt-on-path-manager-$suffix
-containers=("$manager" "$peer_a" "$peer_b" "$production" "$upstream_a" "$upstream_b")
+containers=("$manager" "$peer_a" "$peer_a2" "$peer_a3" "$peer_b" "$production" "$upstream_a" "$upstream_b")
 
 cleanup() {
   docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
@@ -31,7 +33,8 @@ diagnose() {
 }
 trap diagnose ERR
 
-mkdir -p "$root/upstream-a" "$root/upstream-b" "$root/production" "$root/output-a" "$root/output-b"
+mkdir -p "$root/upstream-a" "$root/upstream-b" "$root/production" \
+  "$root/output-a" "$root/output-a2" "$root/output-a3" "$root/output-b"
 printf '%s\n' \
   '[reticulum]' '  share_instance = Yes' '  instance_name = bolt-on-path-upstream-a' '  enable_transport = Yes' \
   '[interfaces]' '  [[CI TCP Client A]]' '    type = TCPClientInterface' '    enabled = Yes' \
@@ -49,7 +52,7 @@ chmod 0600 "$root/upstream-a/config" "$root/upstream-b/config" "$root/production
 # only their private configuration trees are root-owned. Destination hashes are
 # non-secret test coordination data and remain readable by the CI controller.
 chmod 0711 "$root"
-chmod 0777 "$root/output-a" "$root/output-b"
+chmod 0777 "$root/output-a" "$root/output-a2" "$root/output-a3" "$root/output-b"
 sudo chown -R root:root "$root/upstream-a" "$root/upstream-b" "$root/production"
 
 run_rnsd() {
@@ -84,14 +87,23 @@ fixture_path="$PWD/tests/rns_path_fixture.py"
 docker run -d --name "$peer_a" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
   --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/upstream-a:/upstream:ro" \
   -v "$root/output-a:/output" -v "$fixture_path:/fixture.py:ro" --user 0:0 "$IMAGE" \
-  python /fixture.py --config /upstream --output /output/destinations.json --count 3 --prefix via-a >/dev/null
+  python /fixture.py --config /upstream --output /output/destinations.json --count 1 --prefix via-a-1 >/dev/null
+docker run -d --name "$peer_a2" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/upstream-a:/upstream:ro" \
+  -v "$root/output-a2:/output" -v "$fixture_path:/fixture.py:ro" --user 0:0 "$IMAGE" \
+  python /fixture.py --config /upstream --output /output/destinations.json --count 1 --prefix via-a-2 >/dev/null
+docker run -d --name "$peer_a3" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/upstream-a:/upstream:ro" \
+  -v "$root/output-a3:/output" -v "$fixture_path:/fixture.py:ro" --user 0:0 "$IMAGE" \
+  python /fixture.py --config /upstream --output /output/destinations.json --count 1 --prefix via-a-3 >/dev/null
 docker run -d --name "$peer_b" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
   --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/upstream-b:/upstream:ro" \
   -v "$root/output-b:/output" -v "$fixture_path:/fixture.py:ro" --user 0:0 "$IMAGE" \
   python /fixture.py --config /upstream --output /output/destinations.json --count 1 --prefix via-b >/dev/null
 
 for attempt in $(seq 1 60); do
-  test -s "$root/output-a/destinations.json" && test -s "$root/output-b/destinations.json" && break
+  test -s "$root/output-a/destinations.json" && test -s "$root/output-a2/destinations.json" && \
+    test -s "$root/output-a3/destinations.json" && test -s "$root/output-b/destinations.json" && break
   if test "$attempt" -ge 60; then
     echo "Timed out waiting for destination fixtures" >&2
     exit 1
@@ -99,8 +111,8 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 a1=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][0])' "$root/output-a/destinations.json")
-a2=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][1])' "$root/output-a/destinations.json")
-a3=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][2])' "$root/output-a/destinations.json")
+a2=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][0])' "$root/output-a2/destinations.json")
+a3=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][0])' "$root/output-a3/destinations.json")
 b1=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][0])' "$root/output-b/destinations.json")
 
 read_paths() {
