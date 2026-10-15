@@ -63,6 +63,21 @@ def _run_json(runner: Runner, command: list[str], label: str) -> Any:
         raise ObservationUnavailable(f"{label} returned invalid JSON") from error
 
 
+def _rns_version(runner: Runner, status: Any) -> str | None:
+    if isinstance(status, dict):
+        reported = status.get("rns_version") or status.get("version")
+        if reported:
+            return str(reported)
+    try:
+        result = runner(["rnstatus", "--version"])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value.removeprefix("rnstatus ").strip() or None
+
+
 def _safe_interfaces(status: Any) -> list[dict[str, Any]]:
     return [{key: interface.get(key) for key in SAFE_INTERFACE_FIELDS} for interface in find_interfaces(status)]
 
@@ -140,7 +155,7 @@ def collect_observation(source: Path, output_dir: Path, *, source_display_path: 
     runtime_interfaces = _safe_interfaces(status)
     paths = normalize_paths(path_data)
     collected_at = int(time.time())
-    version = status.get("rns_version") or status.get("version") if isinstance(status, dict) else None
+    version = _rns_version(runner, status)
     transport = status.get("transport_enabled") if isinstance(status, dict) else None
     if isinstance(status, dict) and transport is None and "transport_id" in status:
         transport = bool(status.get("transport_id"))

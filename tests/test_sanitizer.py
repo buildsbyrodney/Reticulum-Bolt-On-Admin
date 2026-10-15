@@ -24,6 +24,8 @@ PRODUCTION_CONFIG = """[reticulum]
 
 
 def fake_runner(command):
+    if command == ["rnstatus", "--version"]:
+        return subprocess.CompletedProcess(command, 0, "rnstatus 1.5.7\n", "")
     if command[0] == "rnstatus":
         payload = {
             "rns_version": "1.5.7",
