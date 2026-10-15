@@ -22,6 +22,7 @@ cleanup() {
 trap cleanup EXIT
 diagnose() {
   local status=$?
+  echo "Controlled path integration failed with status $status" >&2
   for container in "${containers[@]}"; do
     if docker inspect "$container" >/dev/null 2>&1; then
       echo "--- diagnostic log: $container ---" >&2
@@ -54,9 +55,11 @@ chmod 0600 "$root/upstream-a/config" "$root/upstream-b/config" "$root/production
 chmod 0711 "$root"
 chmod 0777 "$root/output-a" "$root/output-a2" "$root/output-a3" "$root/output-b"
 sudo chown -R root:root "$root/upstream-a" "$root/upstream-b" "$root/production"
+echo "Controlled path fixtures prepared for $PLATFORM"
 
 run_rnsd() {
   local name=$1 directory=$2
+  echo "Starting controlled rnsd: $name"
   docker run -d --name "$name" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
     --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$directory:/rns" \
     --user 0:0 "$IMAGE" rnsd --config /rns --service >/dev/null
@@ -74,14 +77,17 @@ wait_socket() {
 }
 run_rnsd "$production" "$root/production"
 wait_socket bolt-on-path-production
+echo "Production shared instance ready"
 run_rnsd "$upstream_a" "$root/upstream-a"
 run_rnsd "$upstream_b" "$root/upstream-b"
 wait_socket bolt-on-path-upstream-a
 wait_socket bolt-on-path-upstream-b
+echo "Controlled upstream transports ready"
 
 docker run -d --name "$manager" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
   --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/production:/management:ro" \
   --user 0:0 "$IMAGE" sleep infinity >/dev/null
+echo "Management client ready"
 
 fixture_path="$PWD/tests/rns_path_fixture.py"
 docker run -d --name "$peer_a" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
@@ -100,6 +106,7 @@ docker run -d --name "$peer_b" --platform "$PLATFORM" --network host --read-only
   --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/upstream-b:/upstream:ro" \
   -v "$root/output-b:/output" -v "$fixture_path:/fixture.py:ro" --user 0:0 "$IMAGE" \
   python /fixture.py --config /upstream --output /output/destinations.json --count 1 --prefix via-b >/dev/null
+echo "Disposable destination peers started"
 
 for attempt in $(seq 1 60); do
   test -s "$root/output-a/destinations.json" && test -s "$root/output-a2/destinations.json" && \
@@ -138,6 +145,7 @@ raise SystemExit(0 if ((targets <= present) if mode == "present" else targets.is
 }
 
 wait_for_state present "$a1" "$a2" "$a3" "$b1"
+echo "All deterministic paths learned"
 initial=$(read_paths)
 via_a=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); targets=set(sys.argv[2:5]); vias={r.get("via") for r in d["paths"] if r.get("hash") in targets}; assert len(vias)==1; print(vias.pop())' "$initial" "$a1" "$a2" "$a3")
 via_b=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); target=sys.argv[2]; print(next(r["via"] for r in d["paths"] if r.get("hash")==target))' "$initial" "$b1")
@@ -156,11 +164,13 @@ python3 -c 'import json,sys; p={r.get("hash") for r in json.loads(sys.argv[1])["
 
 printf '%s\n' "$a1" > "$root/output-a/reannounce"
 wait_for_state present "$a1" "$a2" "$a3" "$b1"
+echo "Exact path drop and relearn verified"
 
 docker exec "$manager" python /app/src/reticulum_bolt_on/management_helper.py --config /management drop-via "$via_a"
 wait_for_state absent "$a1" "$a2" "$a3"
 after_via=$(read_paths)
 python3 -c 'import json,sys; p={r.get("hash") for r in json.loads(sys.argv[1])["paths"]}; assert set(sys.argv[2:5]).isdisjoint(p); assert sys.argv[5] in p' "$after_via" "$a1" "$a2" "$a3" "$b1"
+echo "Exact via drop and unrelated-path survival verified"
 
 test "$(sudo sha256sum "$root/production/config" | cut -d' ' -f1)" = "$config_before"
 # RNS itself rewrites volatile destination-table, packet-hash and announce-cache
