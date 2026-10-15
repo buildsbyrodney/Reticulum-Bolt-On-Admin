@@ -53,3 +53,10 @@ class RuntimeSnapshot:
     path_count: int | None = None
     paths_truncated: bool = False
 
+
+@dataclass(frozen=True)
+class ManagementResult:
+    success: bool
+    message: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+

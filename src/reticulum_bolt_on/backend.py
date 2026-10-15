@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 import time
 import subprocess
 from abc import ABC, abstractmethod
@@ -9,10 +12,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .detection import detect
-from .models import DetectionResult, InstallationCandidate, RuntimeSnapshot
+from .models import DetectionResult, InstallationCandidate, ManagementResult, RuntimeSnapshot
 from .parsers import find_interfaces, normalize_paths, parse_config_interfaces, proven_clients
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
 SENSITIVE_CONFIG_FIELDS = frozenset({
     "ifac_key", "ifac_netkey", "ifac_netname", "ifac_passphrase",
     "ifac_signature", "network_key", "network_name", "passphrase",
@@ -35,25 +39,106 @@ class ReticulumBackend(ABC):
     @abstractmethod
     def capabilities(self) -> dict[str, bool]: ...
 
+    def drop_path(self, destination: str) -> ManagementResult:
+        return ManagementResult(False, "Drop path is unavailable for this backend")
+
+    def drop_paths_via(self, via: str) -> ManagementResult:
+        return ManagementResult(False, "Drop paths via transport is unavailable for this backend")
+
+    def drop_announce_queues(self) -> ManagementResult:
+        return ManagementResult(False, "Drop queued announces is unavailable for this backend")
+
+    def manage_interface(self, operation: str, name: str) -> ManagementResult:
+        return ManagementResult(False, "Per-interface management is unavailable for this backend")
+
 
 def command_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
 
 
-class SharedInstanceBackend(ReticulumBackend):
-    """Observer adapter that only invokes read-only RNS utilities.
+class RNSManagementClient:
+    """Narrow native boundary that refuses independent RNS fallback."""
 
-    It never imports/constructs ``RNS.Reticulum`` because construction can
-    initialise a local instance. A failed shared-instance query stays failed.
+    ACTIONS = frozenset({"drop-path", "drop-via", "drop-announces", "attach-interface", "detach-interface", "reload-interface"})
+
+    def __init__(self, config_dir: Path, interpreter: Path | None = None, runner: Runner = command_runner):
+        self.config_dir = config_dir
+        self.interpreter = interpreter or self._discover_interpreter()
+        self.runner = runner
+        self._supported: frozenset[str] | None = None
+
+    @staticmethod
+    def _discover_interpreter() -> Path | None:
+        utility = shutil.which("rnstatus")
+        if not utility:
+            return None
+        try:
+            first_line = Path(utility).open(encoding="utf-8", errors="replace").readline().strip()
+        except OSError:
+            return None
+        if not first_line.startswith("#!"):
+            return None
+        candidate = Path(first_line[2:].strip().split()[0])
+        return candidate if candidate.is_absolute() and candidate.is_file() and os.access(candidate, os.X_OK) else None
+
+    @property
+    def available(self) -> bool:
+        return self.interpreter is not None and self.config_dir.is_dir()
+
+    def _payload(self, command: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+        try:
+            result = self.runner(command)
+        except (OSError, subprocess.SubprocessError) as error:
+            return None, str(error)
+        for line in reversed(result.stdout.splitlines()):
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict) and "success" in candidate:
+                return candidate, None
+        return None, (result.stderr or result.stdout or "no safe result returned").strip()[:500]
+
+    def supports(self, action: str) -> bool:
+        if action not in self.ACTIONS or not self.available:
+            return False
+        if self._supported is None:
+            command = [str(self.interpreter), str(Path(__file__).with_name("management_helper.py")),
+                       "--config", str(self.config_dir), "probe"]
+            payload, _ = self._payload(command)
+            self._supported = frozenset(payload.get("capabilities") or ()) if payload and payload.get("success") else frozenset()
+        return action in self._supported
+
+    def execute(self, action: str, target: str | None = None) -> ManagementResult:
+        if action not in self.ACTIONS or not self.available:
+            return ManagementResult(False, "Native shared-instance management is unavailable")
+        command = [str(self.interpreter), str(Path(__file__).with_name("management_helper.py")),
+                   "--config", str(self.config_dir), action]
+        if target is not None:
+            command.append(target)
+        payload, error = self._payload(command)
+        if payload is None:
+            return ManagementResult(False, f"Management helper failed: {error or 'no safe result returned'}")
+        return ManagementResult(bool(payload.get("success")), str(payload.get("message") or "No result message")[:500])
+
+
+class SharedInstanceBackend(ReticulumBackend):
+    """Observer adapter with a separately gated native management boundary.
+
+    Observer reads never import or construct ``RNS.Reticulum``. Management is
+    delegated to a helper that requires an existing shared instance, so a
+    failed attachment can never initialise an independent network instance.
     """
     def __init__(self, config_path: Path | None = None, runner: Runner = command_runner, detector=detect,
-                 snapshot_path: Path | None = None, snapshot_max_age: int = 90):
+                 snapshot_path: Path | None = None, snapshot_max_age: int = 90,
+                 manager: RNSManagementClient | None = None):
         self.config_path = config_path
         self.runner = runner
         self.detector = detector
         self.snapshot_path = snapshot_path
         self.snapshot_max_age = snapshot_max_age
         self._snapshot: RuntimeSnapshot | None = None
+        self.manager = manager or (RNSManagementClient(config_path.parent) if config_path else None)
 
     def detect(self) -> DetectionResult:
         result = self.detector(selected_config=self.config_path)
@@ -137,8 +222,51 @@ class SharedInstanceBackend(ReticulumBackend):
             return {"available": False, "error": str(error), "sections": {}, "interfaces": []}
 
     def capabilities(self) -> dict[str, bool]:
-        return {"observe": True, "labels": True, "drop_path": False, "drop_via": False, "drop_announces": False,
-                "reload_interface": False, "edit_config": False, "restart_service": False, "transport_enable": False}
+        def supported(action: str) -> bool:
+            if not self.config_path or not self.manager or self.snapshot_path or not self.manager.available:
+                return False
+            probe = getattr(self.manager, "supports", None)
+            return bool(probe(action) if probe else True)
+        return {"observe": True, "labels": True, "drop_path": supported("drop-path"),
+                "drop_via": supported("drop-via"), "drop_announces": supported("drop-announces"),
+                "attach_interface": supported("attach-interface"), "detach_interface": supported("detach-interface"),
+                "reload_interface": supported("reload-interface"), "edit_config": False, "restart_service": False,
+                "transport_enable": False}
+
+    def _managed(self, action: str, target: str | None = None) -> ManagementResult:
+        probe = getattr(self.manager, "supports", None) if self.manager else None
+        if not self.manager or not self.manager.available or self.snapshot_path or (probe and not probe(action)):
+            return ManagementResult(False, "Management capability is disabled for this deployment")
+        result = self.manager.execute(action, target)
+        if not result.success:
+            return result
+        self._snapshot = None
+        refreshed = self.runtime_status()
+        metadata = {"path_state_refreshed": bool(refreshed.available)}
+        message = result.message
+        if not refreshed.available:
+            message += "; action succeeded but refreshed runtime state is unavailable"
+        return ManagementResult(True, message, metadata)
+
+    def drop_path(self, destination: str) -> ManagementResult:
+        if not HEX32.fullmatch(destination):
+            return ManagementResult(False, "Destination must be exactly 32 hexadecimal characters")
+        return self._managed("drop-path", destination)
+
+    def drop_paths_via(self, via: str) -> ManagementResult:
+        if not HEX32.fullmatch(via):
+            return ManagementResult(False, "Via transport must be exactly 32 hexadecimal characters")
+        return self._managed("drop-via", via)
+
+    def drop_announce_queues(self) -> ManagementResult:
+        return self._managed("drop-announces")
+
+    def manage_interface(self, operation: str, name: str) -> ManagementResult:
+        if operation not in {"attach", "detach", "reload"}:
+            return ManagementResult(False, "Unsupported interface operation")
+        if not name or len(name) > 128 or any(ord(char) < 32 for char in name):
+            return ManagementResult(False, "Interface name is invalid")
+        return self._managed(f"{operation}-interface", name)
 
 
 class SnapshotBackend(ReticulumBackend):
@@ -246,5 +374,6 @@ class SnapshotBackend(ReticulumBackend):
 
     def capabilities(self) -> dict[str, bool]:
         return {"observe": True, "labels": True, "drop_path": False, "drop_via": False, "drop_announces": False,
-                "reload_interface": False, "edit_config": False, "restart_service": False, "transport_enable": False}
+                "attach_interface": False, "detach_interface": False, "reload_interface": False,
+                "edit_config": False, "restart_service": False, "transport_enable": False}
 

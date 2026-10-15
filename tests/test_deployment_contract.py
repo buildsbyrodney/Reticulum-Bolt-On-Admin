@@ -142,7 +142,8 @@ def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path
     assert f"export PATH={user_bin}:\"$PATH\"" in launcher
 
 
-def test_observer_source_has_no_management_routes():
+def test_management_source_has_no_forbidden_lifecycle_or_config_routes():
     source=(ROOT/"src/reticulum_bolt_on/app.py").read_text()
-    for route in ("drop_path","drop_via","restart_service","edit_config"):
-        assert f'@app.post("/{route}' not in source
+    assert '@app.post("/management/' in source
+    for forbidden in ("restart_service", "edit_config", "transport_enable", "docker restart", "systemctl restart"):
+        assert forbidden not in source

@@ -2,7 +2,7 @@
 
 Reticulum Bolt-On Admin is a lightweight, observer-first web GUI for administrators who **already have Reticulum/rnsd installed and configured**. It is a separate project from [`buildsbyrodney/Reticulum-Admin-GUI`](https://github.com/buildsbyrodney/Reticulum-Admin-GUI), which remains the managed-appliance project.
 
-Version 0.1.1 is deliberately small: it observes an existing shared instance and stores only GUI-local authentication, labels, bounded metrics, and events. It does not take ownership of Reticulum.
+Version 0.2.0 keeps Observer Mode as the default and adds a deliberately narrow, capability-gated Management Mode for reviewed recovery actions. It does not take ownership of Reticulum.
 
 ## Safety contract
 
@@ -15,9 +15,9 @@ Observer Mode never:
 - edits interfaces or enables Transport mode;
 - silently chooses between multiple configurations.
 
-Runtime reads use supported `rnstatus --json` and `rnpath --table --json` utility attachment. The application deliberately does not construct `RNS.Reticulum` as a fallback. If shared-instance attachment is unavailable, the UI says **Unavailable**.
+Observer runtime reads use supported `rnstatus --json` and `rnpath --table --json` utility attachment. The observer deliberately does not construct `RNS.Reticulum` as a fallback. Native management uses the selected existing RNS 1.5.7 runtime with `require_shared_instance=True`; failed attachment is fatal and never falls back to an independent instance. If shared-instance attachment is unavailable, the UI says **Unavailable**.
 
-## v0.1.1 Observer Mode
+## v0.2.0 Observer Mode
 
 - Conservative detection of host-native Python, systemd `rnsd`, manually launched/shared instances, and detectable Docker deployments.
 - Explicit ambiguity failure when more than one readable config is found.
@@ -31,7 +31,24 @@ Runtime reads use supported `rnstatus --json` and `rnpath --table --json` utilit
 - Single-admin first-run authentication, secure cookie settings, password hashing, and CSRF protection.
 - Responsive collapsed navigation for mobile browsers.
 
-All future management capabilities report disabled in v0.1.1. There are no management controls in the UI.
+Observer Mode remains active even when a backend exposes management capabilities. The header distinguishes **Observer Mode** from **Management capability available**.
+
+## v0.2.0 Management Mode
+
+Management is capability-gated per backend and deployment. A control is not shown as available merely because another deployment supports it. Every execution requires the authenticated local administrator, a CSRF-protected POST, a separate review page, and an explicit confirmation. GET requests never execute management actions.
+
+The first native shared-instance backend supports the following when the exact RNS 1.5.7 capability probe succeeds and the complete existing Reticulum state tree is already present:
+
+- dropping one exact 32-hex destination path;
+- dropping all current paths through one exact, non-empty 32-hex `via` transport, with current count and at most ten destination samples on the review page;
+- dropping all queued announces, clearly distinguished from dropping paths;
+- attaching, detaching, or reloading one positively known interface through the RNS per-interface API, without restarting `rnsd`.
+
+Each attempt records a bounded GUI-local audit event containing timestamp, action, target, success/failure, and allow-listed non-secret metadata. No credentials or production configuration are copied into audit records.
+
+The current Docker/root-owned snapshot backend reports all management capabilities disabled. Its web container still receives no production config, identity, RPC credentials, IFAC secrets, or Docker socket. Extending the privileged helper is deferred until a narrowly scoped, authenticated request boundary is separately designed and tested.
+
+Management Mode does not provide arbitrary configuration editing, Transport enable/disable, `rnsd`/systemd/Docker restart, IFAC or identity changes, or firewall/network changes.
 
 ## Detection and supported deployments
 
@@ -130,7 +147,7 @@ A separate observation-helper boundary runs as container UID 0 solely because th
 
 Every 30 seconds the helper atomically replaces `config-view.json`, `runtime-status.json`, `paths.json`, and `refresh-status.json`. Output is normalized and bounded, and contains presentation fields, counters, path rows, IFAC presence booleans, source metadata, and collection times only. It never publishes the raw config, `rpc_key`, identities/private keys, IFAC/network keys, passphrases, or other credentials. Failed authentication or collection marks the refresh failed while preserving the last complete snapshots; the UI reports **Unavailable** or **Stale** instead of treating old data as current.
 
-The image intentionally includes `rns==1.5.7` for compatible utilities. Only the helper invokes them in the protected Docker architecture. The web process never invokes `rnstatus`, `rnpath`, or `rnsd`. CI exercises identity-derived RPC authentication on AMD64 and ARM64, explicit `rpc_key` authentication on AMD64, and verifies that neither helper nor web starts `rnsd`.
+The image intentionally includes `rns==1.5.7` for compatible utilities. Only the observation helper invokes them in the protected Docker architecture; Docker management remains disabled. The web process never invokes `rnstatus`, `rnpath`, or `rnsd`. CI exercises identity-derived RPC authentication on AMD64 and ARM64, explicit `rpc_key` authentication on AMD64, confirms snapshot management is disabled, and verifies that neither helper nor web starts `rnsd`.
 
 ### Docker/helper cleanup
 
@@ -175,13 +192,15 @@ pytest
 
 Release work begins on a verification branch. Do not merge, tag, or release before review. CI runs Python regression tests, builds and executes the container for `linux/amd64` and `linux/arm64`, validates both Reticulum utilities, and confirms that the observer starts without an `rnsd` process.
 
-## Known v0.1.1 limitations
+## Known v0.2.0 limitations
 
 - Exact runtime fields vary by Reticulum version; unsupported values are shown as **Unavailable**.
 - Shared-instance reachability from the helper depends on the host deployment and IPC/network arrangement; failure is reported without fallback.
 - Docker detection is best-effort and read-only; the web container itself intentionally has no Docker socket.
 - systemd/process ownership is evidence, not authority to manage the service.
-- No config writes, recovery actions, path drops, queue drops, reloads, or restarts exist yet.
+- Management actions currently require a readable native installation using the existing user-authorized RNS 1.5.7 runtime. Docker/root-owned snapshot deployments remain Observer-only.
+- Per-interface control is available only when the native shared-instance backend positively supports the RNS attach/detach/reload operations; it never falls back to restarting `rnsd`.
+- Configuration writes and all service/container restart operations remain intentionally unavailable.
 
 ## Provenance
 

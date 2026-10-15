@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
+import time
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -11,8 +13,15 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from .backend import ReticulumBackend, SharedInstanceBackend, SnapshotBackend
 from .detection import detect
+from .models import ManagementResult
 from .parsers import bounded_paths, merge_interfaces, path_health
 from .storage import ObserverStore
+
+
+HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
+MANAGEMENT_CAPABILITIES = (
+    "drop_path", "drop_via", "drop_announces", "attach_interface", "detach_interface", "reload_interface"
+)
 
 
 def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend | None = None) -> Flask:
@@ -66,6 +75,7 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         for path in paths:
             path["destination_label"] = labels.get(("destination", path["destination"]))
             path["transport_label"] = labels.get(("transport", path["via"]))
+            path["management_target"] = bool(HEX32.fullmatch(str(path.get("destination") or "")))
         health = path_health(paths, labels, total_count=runtime.path_count if runtime else None)
         clients = runtime.clients if runtime else []
         snapshot = {"interfaces": [row["name"] for row in interfaces if row.get("runtime")], "clients": [row["key"] for row in clients], "path_count": len(paths)}
@@ -74,7 +84,10 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
                 "paths": paths, "health": health, "clients": clients, "labels": labels, "capabilities": adapter.capabilities()}
 
     @app.context_processor
-    def common(): return {"observer_mode": True, "capabilities": adapter.capabilities()}
+    def common():
+        capabilities = adapter.capabilities()
+        return {"observer_mode": True, "capabilities": capabilities,
+                "management_available": any(capabilities.get(name, False) for name in MANAGEMENT_CAPABILITIES)}
 
     @app.route("/setup", methods=["GET", "POST"])
     def setup():
@@ -131,6 +144,109 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     @app.get("/timeline")
     @login_required
     def timeline(): return render_template("timeline.html", events=store.events(), history=store.history())
+
+    @app.get("/management")
+    @login_required
+    def management():
+        return render_template("management.html", **observe())
+
+    def require_capability(name: str) -> None:
+        if not adapter.capabilities().get(name, False):
+            abort(403, "Management capability is disabled for this backend/deployment")
+
+    def pending_review(action: str, target: str, title: str, explanation: str,
+                       details: list[tuple[str, str]], metadata: dict[str, Any] | None = None):
+        session["pending_management"] = {
+            "action": action, "target": target, "issued_at": int(time.time()), "metadata": metadata or {},
+        }
+        return render_template("management_review.html", action=action, target=target, title=title,
+                               explanation=explanation, details=details)
+
+    @app.post("/management/drop-path/review")
+    @login_required
+    def review_drop_path():
+        require_csrf(); require_capability("drop_path")
+        destination = request.form.get("destination", "").strip().lower()
+        if not HEX32.fullmatch(destination): abort(400, "Destination must be exactly 32 hexadecimal characters")
+        model = observe()
+        current = next((path for path in model["paths"] if path.get("destination", "").lower() == destination), None)
+        details = [("Destination", destination), ("Currently observed", "Yes" if current else "No")]
+        if current:
+            details.extend((("Via", current.get("via") or "Unavailable"),
+                            ("Interface", str(current.get("interface") or "Unavailable"))))
+        return pending_review("drop_path", destination, "Review destination path removal",
+                              "This removes only the selected destination path from the existing Reticulum instance.", details)
+
+    @app.post("/management/drop-via/review")
+    @login_required
+    def review_drop_via():
+        require_csrf(); require_capability("drop_via")
+        via = request.form.get("via", "").strip().lower()
+        if not HEX32.fullmatch(via): abort(400, "Via transport must be exactly 32 hexadecimal characters")
+        model = observe()
+        matching = [path for path in model["paths"] if str(path.get("via") or "").lower() == via]
+        if not matching: abort(400, "No current paths have the selected exact via transport")
+        samples = [str(path.get("destination")) for path in matching[:10] if path.get("destination")]
+        details = [("Transport hash", via), ("Current matching paths", str(len(matching))),
+                   ("Bounded destination samples", ", ".join(samples) or "Unavailable")]
+        return pending_review("drop_via", via, "Review transport path removal",
+                              "This removes all currently known paths learned through this exact transport hash.", details,
+                              {"matching_path_count": len(matching), "sample_count": len(samples)})
+
+    @app.post("/management/drop-announces/review")
+    @login_required
+    def review_drop_announces():
+        require_csrf(); require_capability("drop_announces")
+        return pending_review("drop_announces", "all interfaces", "Review queued-announce drop",
+                              "This drops queued announces on all interfaces. It does not remove destination paths.",
+                              [("Scope", "All interface announce queues"), ("Paths", "Not removed")])
+
+    @app.post("/management/interface/review")
+    @login_required
+    def review_interface():
+        require_csrf()
+        operation = request.form.get("operation", "").strip().lower()
+        capability = f"{operation}_interface"
+        if operation not in {"attach", "detach", "reload"}: abort(400, "Invalid interface operation")
+        require_capability(capability)
+        name = request.form.get("name", "").strip()
+        if not name or len(name) > 128 or any(ord(char) < 32 for char in name): abort(400, "Invalid interface name")
+        model = observe()
+        interface = next((row for row in model["interfaces"] if str(row.get("name")) == name), None)
+        if not interface: abort(400, "Interface is not currently known")
+        if not interface.get("configured"): abort(400, "Runtime-only/internal interfaces cannot be managed")
+        if operation == "attach" and interface.get("runtime"): abort(400, "Interface is already attached")
+        if operation in {"detach", "reload"} and not interface.get("runtime"): abort(400, "Interface is not currently attached")
+        return pending_review(capability, name, f"Review interface {operation}",
+                              f"This asks the existing Reticulum shared instance to {operation} only this interface. It does not restart rnsd.",
+                              [("Interface", name), ("Operation", operation)], {"interface_operation": operation})
+
+    @app.post("/management/<action>/execute")
+    @login_required
+    def execute_management(action: str):
+        require_csrf()
+        pending = session.get("pending_management") or {}
+        if pending.get("action") != action or int(time.time()) - int(pending.get("issued_at") or 0) > 300:
+            abort(400, "Management review is missing or expired")
+        if request.form.get("confirm") != "yes": abort(400, "Explicit confirmation is required")
+        require_capability(action)
+        target = str(pending.get("target") or "")
+        if action in {"drop_path", "drop_via"} and not HEX32.fullmatch(target):
+            abort(400, "Reviewed management target is invalid")
+        try:
+            if action == "drop_path": result = adapter.drop_path(target)
+            elif action == "drop_via": result = adapter.drop_paths_via(target)
+            elif action == "drop_announces": result = adapter.drop_announce_queues()
+            elif action in {"attach_interface", "detach_interface", "reload_interface"}:
+                result = adapter.manage_interface(action.removesuffix("_interface"), target)
+            else: abort(400, "Unsupported management action")
+        except Exception:
+            result = ManagementResult(False, "The management backend failed safely; no unrelated action was attempted")
+        metadata = dict(pending.get("metadata") or {})
+        metadata.update(result.metadata)
+        store.record_audit(action, target, result.success, metadata)
+        session.pop("pending_management", None)
+        return render_template("management_result.html", action=action, target=target, result=result)
 
     @app.post("/labels")
     @login_required

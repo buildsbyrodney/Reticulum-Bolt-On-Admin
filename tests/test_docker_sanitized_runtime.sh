@@ -39,6 +39,16 @@ pid_before=$(docker inspect "$production" --format '{{.State.Pid}}')
 started_before=$(docker inspect "$production" --format '{{.State.StartedAt}}')
 restart_before=$(docker inspect "$production" --format '{{.RestartCount}}')
 
+# Exercise one supported management operation against this isolated existing
+# shared instance. The production tree is mounted read-only, and the helper's
+# require_shared_instance=True boundary makes independent fallback impossible.
+docker run --rm --platform "$PLATFORM" --user 0:0 --network host --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/production:/management:ro" "$IMAGE" python /app/src/reticulum_bolt_on/management_helper.py --config /management drop-announces
+test "$(sudo sha256sum "$root/production/config" | cut -d' ' -f1)" = "$config_before"
+test "$(sudo find "$root/production/storage" -type f -print0 | sudo sort -z | sudo xargs -0 sha256sum | sha256sum)" = "$storage_before"
+test "$(docker inspect "$production" --format '{{.State.Pid}}')" = "$pid_before"
+test "$(docker inspect "$production" --format '{{.State.StartedAt}}')" = "$started_before"
+test "$(docker inspect "$production" --format '{{.RestartCount}}')" = "$restart_before"
+
 docker run -d --name "$helper" --platform "$PLATFORM" --user 0:0 --network host --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/production:/source:ro" -v "$root/observer-data:/observer-data" "$IMAGE" reticulum-bolt-on-sanitize --source /source/config --output-dir /observer-data --source-display-path /root/.reticulum/config --storage-display-path /root/.reticulum/storage --deployment-type docker --watch-seconds 5 >/dev/null
 for attempt in $(seq 1 60); do
   sudo grep -q '"ok": true' "$root/observer-data/refresh-status.json" 2>/dev/null && break
@@ -60,6 +70,7 @@ for attempt in $(seq 1 30); do
   test "$attempt" -lt 30
   sleep 1
 done
+docker exec "$observer" python -c 'from pathlib import Path; from reticulum_bolt_on.backend import SnapshotBackend; c=SnapshotBackend(Path("/observer-data")).capabilities(); assert not any(c.get(k) for k in ("drop_path","drop_via","drop_announces","attach_interface","detach_interface","reload_interface"))'
 test "$(docker inspect "$observer" --format '{{.Config.User}}')" = observer
 test "$(docker inspect "$observer" --format '{{range .Mounts}}{{println .Source}}{{end}}' | grep -Fxc "$root/production")" = 0
 docker exec "$observer" python -c 'import pathlib; ps=[p.read_bytes().replace(b"\0",b" ").decode("utf-8","ignore") for p in pathlib.Path("/proc").glob("[0-9]*/cmdline")]; assert not [p for p in ps if any(pathlib.Path(t).name in {"rnsd","rnstatus","rnpath"} for t in p.split())]'

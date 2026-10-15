@@ -58,3 +58,26 @@ class ObserverStore:
 
     def events(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as con: return [dict(row) for row in con.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def record_audit(self, action: str, target: str, success: bool, metadata: dict[str, Any] | None = None) -> None:
+        allowed_actions = {"drop_path", "drop_via", "drop_announces", "attach_interface", "detach_interface", "reload_interface"}
+        if action not in allowed_actions:
+            raise ValueError("unsupported audit action")
+        safe_target = str(target)[:128]
+        safe_metadata: dict[str, Any] = {}
+        for key, value in (metadata or {}).items():
+            if key not in {"matching_path_count", "sample_count", "path_state_refreshed", "interface_operation"}:
+                continue
+            if isinstance(value, (bool, int, float)) or value is None:
+                safe_metadata[key] = value
+            elif isinstance(value, str):
+                safe_metadata[key] = value[:128]
+        result = "success" if success else "failure"
+        now = int(time.time())
+        detail = json.dumps({"action": action, "target": safe_target, "result": result,
+                             "metadata": safe_metadata}, separators=(",", ":"))
+        with self.connect() as con:
+            con.execute("INSERT INTO events(occurred_at,kind,severity,message,detail_json) VALUES(?,?,?,?,?)",
+                        (now, "management_action", "info" if success else "error",
+                         f"Management {action} {result}: {safe_target}", detail))
+            con.execute("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 1000)")

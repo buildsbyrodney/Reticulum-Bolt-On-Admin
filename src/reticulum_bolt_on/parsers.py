@@ -214,6 +214,7 @@ def path_health(paths: Iterable[dict[str, Any]], labels: dict[tuple[str, str], s
     rows = []
     for via, group in groups.items():
         rows.append({"via": via, "label": labels.get(("transport", via)), "count": group["count"],
+                     "management_target": bool(VALID_HASH.fullmatch(via)),
                      "share": group["count"] / total if total else 0, "share_percent": round(group["count"] * 100 / total, 1) if total else 0,
                      "min_hops": min(group["hops"]) if group["hops"] else None, "max_hops": max(group["hops"]) if group["hops"] else None,
                      "interfaces": sorted(group["interfaces"]), "samples": group["samples"]})
