@@ -32,7 +32,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OBSERVER_DATA="$STATE_DIR/observer-input"
 GUI_STATE="$STATE_DIR/gui"
 if ((PREPARE_DOCKER == 1)); then
-  install -d -m 0755 "$STATE_DIR" "$OBSERVER_DATA"
+  install -d -m 0755 "$STATE_DIR"
+  # The capability-free UID 0 helper must own only its GUI-managed snapshot
+  # directory so it can atomically replace JSON files. Production mounts are
+  # separate and read-only, and are never passed to install/chown/chmod.
+  install -d -o 0 -g 0 -m 0755 "$OBSERVER_DATA"
   PYTHONPATH="$SCRIPT_DIR/src" "$PYTHON_BIN" -m reticulum_bolt_on.sanitizer --source "$CONFIG" --output-dir "$OBSERVER_DATA" --source-display-path "$CONFIG" --storage-display-path "$(dirname "$CONFIG")/storage" --deployment-type docker --config-only
   install -d -o 10001 -g 10001 -m 0700 "$GUI_STATE"
   echo "Sanitized config view prepared at $OBSERVER_DATA; the read-only observation helper will collect runtime state."

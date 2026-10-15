@@ -41,6 +41,13 @@ def test_container_pins_observer_utilities_without_starting_rnsd():
     assert 'CMD ["rnsd"' not in dockerfile and 'ENTRYPOINT ["rnsd"' not in dockerfile
 
 
+def test_installer_owns_only_gui_managed_state_for_each_container_user():
+    text=(ROOT/"install.sh").read_text()
+    assert 'install -d -o 0 -g 0 -m 0755 "$OBSERVER_DATA"' in text
+    assert 'install -d -o 10001 -g 10001 -m 0700 "$GUI_STATE"' in text
+    assert "\nchown " not in text and "; chown " not in text
+
+
 @pytest.mark.skipif(os.name == "nt", reason="installer targets Linux")
 def test_installer_rejects_old_python_before_writing(tmp_path):
     old_python = tmp_path / "python3-old"
