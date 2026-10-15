@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import subprocess
+import textwrap
 
 import pytest
 
@@ -31,6 +32,10 @@ def test_installer_stops_on_ambiguity_and_never_manages_reticulum():
     assert text.index("sys.version_info >= (3, 10)") < text.index("install -d")
     forbidden=("systemctl restart rnsd","systemctl stop rnsd","docker compose down","rnsd --")
     assert not any(item in text for item in forbidden)
+    assert 'DEFAULT_PREFIX="$HOME/.local/reticulum-bolt-on-admin"' in text
+    assert 'DEFAULT_STATE_DIR="$HOME/.local/share/reticulum-bolt-on-admin"' in text
+    assert "Refusing to install or run the native web GUI as root" in text
+    assert "systemctl --user enable --now" in text
 
 
 def test_container_pins_observer_utilities_without_starting_rnsd():
@@ -62,6 +67,69 @@ def test_installer_rejects_old_python_before_writing(tmp_path):
     assert result.returncode == 1
     assert "too old" in result.stderr
     assert not prefix.exists() and not state.exists()
+
+
+@pytest.mark.skipif(os.name == "nt" or getattr(os, "geteuid", lambda: 0)() == 0,
+                    reason="normal-user Linux installer integration")
+def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path):
+    home = tmp_path / "home"
+    config = home / ".reticulum" / "config"
+    config.parent.mkdir(parents=True)
+    config.write_text("[reticulum]\n  share_instance = Yes\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3-test"
+    fake_python.write_text(textwrap.dedent("""\
+        #!/bin/sh
+        if [ "$1" = "-c" ]; then
+          case "$2" in
+            *sys.version_info*) exit 0 ;;
+            *secrets*) printf '%064d\\n' 0; exit 0 ;;
+          esac
+        fi
+        if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+          mkdir -p "$3/bin"
+          printf '#!/bin/sh\\nexit 0\\n' > "$3/bin/pip"
+          chmod 0755 "$3/bin/pip"
+          exit 0
+        fi
+        exit 1
+    """))
+    fake_python.chmod(0o755)
+    systemctl_log = tmp_path / "systemctl.log"
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SYSTEMCTL_LOG\"\nexit 0\n")
+    fake_systemctl.chmod(0o755)
+    sudo_marker = tmp_path / "sudo-used"
+    fake_sudo = fake_bin / "sudo"
+    fake_sudo.write_text("#!/bin/sh\ntouch \"$SUDO_MARKER\"\nexit 99\n")
+    fake_sudo.chmod(0o755)
+    xdg_config = home / ".config"
+    environment = {key: value for key, value in os.environ.items() if key not in {"PREFIX", "STATE_DIR", "RNS_CONFIG_DIR"}}
+    environment.update({
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg_config),
+        "PYTHON_BIN": str(fake_python),
+        "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+        "SYSTEMCTL_LOG": str(systemctl_log),
+        "SUDO_MARKER": str(sudo_marker),
+    })
+    result = subprocess.run(
+        ["bash", str(ROOT / "install.sh"), "--config", str(config), "--yes"],
+        text=True, capture_output=True, env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    prefix = home / ".local" / "reticulum-bolt-on-admin"
+    state = home / ".local" / "share" / "reticulum-bolt-on-admin"
+    assert (prefix / "run").is_file()
+    assert (state / "gui" / "secret").is_file()
+    assert (xdg_config / "systemd" / "user" / "reticulum-bolt-on-admin.service").is_file()
+    assert "--user enable --now reticulum-bolt-on-admin.service" in systemctl_log.read_text()
+    assert f"Exact launcher command: {prefix}/run" in result.stdout
+    assert "Local URL: http://127.0.0.1:8080/" in result.stdout
+    assert not sudo_marker.exists()
+    assert all(path.stat().st_uid == os.geteuid() for path in home.rglob("*"))
+    assert "Refusing to run the Reticulum Bolt-On Admin web GUI as root" in (prefix / "run").read_text()
 
 
 def test_observer_source_has_no_management_routes():

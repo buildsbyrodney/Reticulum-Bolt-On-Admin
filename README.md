@@ -54,20 +54,29 @@ Requirements: Linux, Python 3.10+, an existing Reticulum installation, and `rnst
 ./install.sh
 ```
 
-The installer displays the detected config, storage candidate, shared-instance result, and Docker availability before asking approval. With multiple candidates it stops and requires `--config PATH`. `--yes` is suitable only after an administrator has reviewed the displayed/selected path. It installs GUI code and GUI state only, and does not automatically create any service.
+Run the native installer as the normal user who owns the Reticulum installation. Do not use `sudo`. The defaults are:
+
+- application: `$HOME/.local/reticulum-bolt-on-admin`;
+- GUI state: `$HOME/.local/share/reticulum-bolt-on-admin`.
+
+`PREFIX` and `STATE_DIR` remain available as explicit overrides. The installer displays the detected config, storage candidate, shared-instance result, and Docker availability before asking approval. With multiple candidates it stops and requires `--config PATH`. `--yes` is suitable only after an administrator has reviewed the displayed/selected path.
+
+When a user systemd session is available, the installer creates and starts `reticulum-bolt-on-admin.service` under the user's systemd configuration. Otherwise it prints the exact unprivileged launcher command. In both cases it prints the local URL, `http://127.0.0.1:8080/`. The generated launcher refuses to run the web GUI as root.
+
+If the selected Reticulum config is not readable by the normal user, do not elevate the entire native GUI. Use the isolated Docker/system observation-helper preparation described below; root is needed only to read that protected config and create helper-owned snapshot state.
 
 ## Docker deployment
 
 ```sh
 export RETICULUM_DIR="$HOME/.reticulum"
-export BOLT_ON_STATE="./state"
-export BOLT_ON_OBSERVER_DATA="./observer-data"
 export BOLT_ON_SECRET_KEY="$(openssl rand -hex 32)"
 sudo STATE_DIR="$(pwd)/bolt-on-data" ./install.sh --config "$RETICULUM_DIR/config" --prepare-docker
 export BOLT_ON_STATE="$(pwd)/bolt-on-data/gui"
 export BOLT_ON_OBSERVER_DATA="$(pwd)/bolt-on-data/observer-input"
 docker compose up --build
 ```
+
+The single `sudo` command is required only when preparing the isolated observation boundary: it may need to read a `0600 root:root` production config and must create state owned separately by the capability-free root helper and container UID 10001. It does not install or run the web GUI as root. If the production config is user-readable and this privileged boundary is not needed, use the native installation instead.
 
 The web container runs as UID 10001, drops all capabilities, has a read-only root filesystem, and has no Docker socket, production Reticulum mount, identity, or RPC key. It reads only sanitized JSON snapshots from the helper plus its separate writable GUI database. Reticulum itself does not need to be containerized.
 
