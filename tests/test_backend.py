@@ -12,10 +12,12 @@ def test_shared_instance_attachment_and_no_fallback(tmp_path):
         calls.append(command)
         if command[0] == "rnstatus": return subprocess.CompletedProcess(command, 0, json.dumps({"rns_version":"1.0","interfaces":[]}), "")
         return subprocess.CompletedProcess(command, 0, '{"paths":[]}', "")
-    backend = SharedInstanceBackend(config, runner=runner)
+    manager = FakeManager(paths=[])
+    backend = SharedInstanceBackend(config, runner=runner, manager=manager)
     snap = backend.runtime_status()
     assert snap.available and snap.running
-    assert calls == [["rnstatus","--config",str(tmp_path),"--json"],["rnpath","--config",str(tmp_path),"--table","--json"]]
+    assert calls == [["rnstatus","--config",str(tmp_path),"--json"]]
+    assert manager.path_reads == 1
     assert not any("rnsd" in call for command in calls for call in command)
 
 
@@ -43,13 +45,19 @@ def test_config_view_redacts_ifac_and_never_writes(tmp_path):
 class FakeManager:
     available = True
 
-    def __init__(self, success=True):
+    def __init__(self, success=True, paths=None):
         self.success = success
         self.calls = []
+        self.paths = paths or []
+        self.path_reads = 0
 
     def execute(self, action, target=None):
         self.calls.append((action, target))
         return ManagementResult(self.success, "completed" if self.success else "rejected")
+
+    def read_paths(self):
+        self.path_reads += 1
+        return {"paths": self.paths}, None
 
 
 def test_native_management_is_capability_gated_and_refreshes_paths(tmp_path):
@@ -72,7 +80,6 @@ def test_native_management_is_capability_gated_and_refreshes_paths(tmp_path):
     assert manager.calls == [("drop-path", "a" * 32)]
     assert calls == [
         ["rnstatus", "--config", str(tmp_path), "--json"],
-        ["rnpath", "--config", str(tmp_path), "--table", "--json"],
     ]
     assert not any("rnsd" in argument for command in calls for argument in command)
 

@@ -1,7 +1,7 @@
 import sys
 from types import SimpleNamespace
 
-from reticulum_bolt_on.management_helper import execute
+from reticulum_bolt_on.management_helper import execute, read_paths
 
 
 class FakeReticulum:
@@ -18,6 +18,9 @@ class FakeReticulum:
     def attach_interface(self, name): self.calls.append(("attach_interface", name)); return True
     def detach_interface(self, name): self.calls.append(("detach_interface", name)); return True
     def reload_interface(self, name): self.calls.append(("reload_interface", name)); return True
+    def get_path_table(self):
+        self.calls.append(("get_path_table", None))
+        return [{"hash": bytes.fromhex("a" * 32), "via": bytes.fromhex("b" * 32), "hops": 1}]
 
 
 def _existing_state_tree(root):
@@ -58,6 +61,18 @@ def test_failed_shared_attachment_has_no_fallback_or_rnsd(monkeypatch, tmp_path)
     _existing_state_tree(tmp_path)
     success, message = execute(tmp_path, "drop-path", "a" * 32)
     assert not success and "unavailable" in message.lower()
+
+
+def test_path_reader_requires_shared_instance_and_serializes_hashes(monkeypatch, tmp_path):
+    FakeReticulum.instances.clear()
+    _existing_state_tree(tmp_path)
+    monkeypatch.setitem(sys.modules, "RNS", SimpleNamespace(Reticulum=FakeReticulum))
+
+    success, _, paths = read_paths(tmp_path)
+
+    assert success
+    assert FakeReticulum.instances[-1].kwargs == {"configdir": str(tmp_path), "require_shared_instance": True}
+    assert paths == [{"hash": "a" * 32, "via": "b" * 32, "hops": 1}]
 
 
 def test_helper_rejects_invalid_targets_before_constructing_rns(monkeypatch, tmp_path):

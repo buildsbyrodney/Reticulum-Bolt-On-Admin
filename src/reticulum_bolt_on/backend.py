@@ -137,6 +137,16 @@ class RNSManagementClient:
             return ManagementResult(False, f"Management helper failed: {error or 'no safe result returned'}")
         return ManagementResult(bool(payload.get("success")), str(payload.get("message") or "No result message")[:500])
 
+    def read_paths(self) -> tuple[dict[str, Any] | None, str | None]:
+        if not self.available:
+            return None, "Shared-instance-safe path reader is unavailable"
+        command = [str(self.interpreter), str(Path(__file__).with_name("management_helper.py")),
+                   "--config", str(self.config_dir), "read-paths"]
+        payload, error = self._payload(command)
+        if not payload or not payload.get("success"):
+            return None, error or str((payload or {}).get("message") or "Shared-instance path query failed")
+        return {"paths": payload.get("paths") or []}, None
+
 
 class SharedInstanceBackend(ReticulumBackend):
     """Observer adapter with a separately gated native management boundary.
@@ -190,7 +200,7 @@ class SharedInstanceBackend(ReticulumBackend):
         if error:
             self._snapshot = RuntimeSnapshot(available=False, running=None, error="Shared-instance attachment unavailable: " + error)
             return self._snapshot
-        path_data, path_error = self._run_json(["rnpath", *prefix, "--table", "--json"])
+        path_data, path_error = self.manager.read_paths() if self.manager else (None, "Shared-instance-safe path reader is unavailable")
         runtime_interfaces = find_interfaces(status)
         _, configured = parse_config_interfaces(self.config_path.read_text(encoding="utf-8", errors="replace")) if self.config_path and self.config_path.is_file() else ({}, [])
         paths = normalize_paths(path_data) if path_data is not None else []

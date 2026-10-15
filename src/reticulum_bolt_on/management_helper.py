@@ -26,6 +26,34 @@ def _result(success: bool, message: str, **metadata) -> int:
     return 0 if success else 1
 
 
+def _json_safe(value):
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def read_paths(config_dir: Path) -> tuple[bool, str, list[dict]]:
+    try:
+        import RNS
+    except ImportError:
+        return False, "The selected Reticulum runtime is unavailable", []
+    if not state_tree_ready(config_dir):
+        return False, "Existing Reticulum state tree is incomplete; refusing to create or modify it", []
+    try:
+        reticulum = RNS.Reticulum(configdir=str(config_dir), require_shared_instance=True)
+        table = reticulum.get_path_table()
+        rows = [_json_safe(row) for row in table if isinstance(row, dict)]
+        return True, "Read paths from the existing shared instance", rows
+    except Exception:
+        return False, "Existing Reticulum shared-instance path query is unavailable", []
+
+
 def execute(config_dir: Path, action: str, target: str | None) -> tuple[bool, str]:
     try:
         import RNS
@@ -75,7 +103,7 @@ def execute(config_dir: Path, action: str, target: str | None) -> tuple[bool, st
 def main() -> None:
     parser = argparse.ArgumentParser(description="Narrow shared-instance-only Reticulum management helper")
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("action", choices=("probe", "drop-path", "drop-via", "drop-announces", *sorted(INTERFACE_OPERATIONS)))
+    parser.add_argument("action", choices=("probe", "read-paths", "drop-path", "drop-via", "drop-announces", *sorted(INTERFACE_OPERATIONS)))
     parser.add_argument("target", nargs="?")
     args = parser.parse_args()
     if args.action == "probe":
@@ -92,6 +120,9 @@ def main() -> None:
                                      rns_version=version or None, capabilities=supported))
         except ImportError:
             raise SystemExit(_result(False, "The selected Reticulum runtime is unavailable", capabilities=[]))
+    if args.action == "read-paths":
+        success, message, paths = read_paths(args.config)
+        raise SystemExit(_result(success, message, paths=paths))
     success, message = execute(args.config, args.action, args.target)
     raise SystemExit(_result(success, message))
 
