@@ -48,7 +48,7 @@ Process-manager and Docker detection are evidence only. The backend abstraction 
 
 ## Native installation
 
-Requirements: Linux, Python 3.10+, an existing Reticulum installation, and `rnstatus`/`rnpath` on the GUI process path. Ubuntu/Debian, Raspberry Pi OS 64-bit, ARM64, and x86_64 are targets.
+Requirements: Linux, Python 3.10+, and an existing Reticulum installation. For native installs, `rnstatus` and `rnpath` must be available to the current user on `PATH` or in the standard pipx/user location at `$HOME/.local/bin`. Ubuntu/Debian, Raspberry Pi OS 64-bit, ARM64, and x86_64 are targets.
 
 ```sh
 ./install.sh

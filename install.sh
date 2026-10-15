@@ -33,10 +33,20 @@ RNSTATUS_BIN=""
 RNPATH_BIN=""
 RNS_TOOL_PATH=""
 if ((PREPARE_DOCKER == 0)); then
-  RNSTATUS_BIN="$(command -v rnstatus || true)"
-  RNPATH_BIN="$(command -v rnpath || true)"
+  find_user_rns_utility() {
+    local utility="$1"
+    local resolved
+    resolved="$(command -v "$utility" || true)"
+    if [[ -n "$resolved" ]]; then
+      printf '%s\n' "$resolved"
+    elif [[ -x "$HOME/.local/bin/$utility" ]]; then
+      printf '%s\n' "$HOME/.local/bin/$utility"
+    fi
+  }
+  RNSTATUS_BIN="$(find_user_rns_utility rnstatus)"
+  RNPATH_BIN="$(find_user_rns_utility rnpath)"
   if [[ -z "$RNSTATUS_BIN" || -z "$RNPATH_BIN" ]]; then
-    echo "Native Observer Mode requires rnstatus and rnpath on the current user's PATH. Nothing was changed." >&2
+    echo "Native Observer Mode requires rnstatus and rnpath for the current user (on PATH or in \$HOME/.local/bin). Nothing was changed." >&2
     echo "Install Reticulum for this user first; do not use sudo to run the GUI installer." >&2
     exit 1
   fi

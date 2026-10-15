@@ -96,8 +96,10 @@ def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path
         exit 1
     """))
     fake_python.chmod(0o755)
+    user_bin = home / ".local" / "bin"
+    user_bin.mkdir(parents=True)
     for utility in ("rnstatus", "rnpath"):
-        executable = fake_bin / utility
+        executable = user_bin / utility
         executable.write_text("#!/bin/sh\nexit 1\n")
         executable.chmod(0o755)
     systemctl_log = tmp_path / "systemctl.log"
@@ -114,7 +116,9 @@ def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(xdg_config),
         "PYTHON_BIN": str(fake_python),
-        "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+        # Deliberately omit the real user's ~/.local/bin to reproduce a
+        # non-interactive user service environment around a pipx install.
+        "PATH": f"{fake_bin}{os.pathsep}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "SYSTEMCTL_LOG": str(systemctl_log),
         "SUDO_MARKER": str(sudo_marker),
     })
@@ -135,7 +139,7 @@ def test_native_install_defaults_to_user_paths_without_root_owned_files(tmp_path
     assert all(path.stat().st_uid == os.geteuid() for path in home.rglob("*"))
     launcher = (prefix / "run").read_text()
     assert "Refusing to run the Reticulum Bolt-On Admin web GUI as root" in launcher
-    assert f"export PATH={fake_bin}:\"$PATH\"" in launcher
+    assert f"export PATH={user_bin}:\"$PATH\"" in launcher
 
 
 def test_observer_source_has_no_management_routes():
