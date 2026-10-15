@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import time
 import subprocess
@@ -78,7 +79,22 @@ class RNSManagementClient:
             return None
         if not first_line.startswith("#!"):
             return None
-        candidate = Path(first_line[2:].strip().split()[0])
+        try:
+            shebang = shlex.split(first_line[2:].strip())
+        except ValueError:
+            return None
+        if not shebang:
+            return None
+        candidate = Path(shebang[0])
+        if candidate.name == "env":
+            arguments = shebang[1:]
+            if arguments[:1] == ["-S"]:
+                arguments = arguments[1:]
+            interpreter = next((item for item in arguments if not item.startswith("-") and "=" not in item), None)
+            resolved = shutil.which(interpreter) if interpreter else None
+            if not resolved:
+                return None
+            candidate = Path(resolved)
         return candidate if candidate.is_absolute() and candidate.is_file() and os.access(candidate, os.X_OK) else None
 
     @property

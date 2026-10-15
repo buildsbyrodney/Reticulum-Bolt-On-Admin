@@ -104,3 +104,18 @@ def test_management_capability_probe_requires_exact_supported_runtime(tmp_path):
     assert client.supports("drop-via") is False
     assert len(calls) == 1 and calls[0][-1] == "probe"
 
+
+def test_management_interpreter_discovery_supports_env_python_shebang(tmp_path, monkeypatch):
+    utility = tmp_path / "rnstatus"
+    interpreter = tmp_path / "python3"
+    utility.write_text("#!/usr/bin/env python3\n")
+    interpreter.write_text("")
+    utility.chmod(0o755)
+    interpreter.chmod(0o755)
+
+    def which(command):
+        return str(utility if command == "rnstatus" else interpreter) if command in {"rnstatus", "python3"} else None
+
+    monkeypatch.setattr("reticulum_bolt_on.backend.shutil.which", which)
+    assert RNSManagementClient._discover_interpreter() == interpreter
+
