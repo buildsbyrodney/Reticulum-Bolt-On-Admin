@@ -2,7 +2,7 @@
 
 Reticulum Bolt-On Admin is a lightweight, observer-first web GUI for administrators who **already have Reticulum/rnsd installed and configured**. It is a separate project from [`buildsbyrodney/Reticulum-Admin-GUI`](https://github.com/buildsbyrodney/Reticulum-Admin-GUI), which remains the managed-appliance project.
 
-Version 0.1.0 is deliberately small: it observes an existing shared instance and stores only GUI-local authentication, labels, bounded metrics, and events. It does not take ownership of Reticulum.
+Version 0.1.1 is deliberately small: it observes an existing shared instance and stores only GUI-local authentication, labels, bounded metrics, and events. It does not take ownership of Reticulum.
 
 ## Safety contract
 
@@ -17,7 +17,7 @@ Observer Mode never:
 
 Runtime reads use supported `rnstatus --json` and `rnpath --table --json` utility attachment. The application deliberately does not construct `RNS.Reticulum` as a fallback. If shared-instance attachment is unavailable, the UI says **Unavailable**.
 
-## v0.1.0 Observer Mode
+## v0.1.1 Observer Mode
 
 - Conservative detection of host-native Python, systemd `rnsd`, manually launched/shared instances, and detectable Docker deployments.
 - Explicit ambiguity failure when more than one readable config is found.
@@ -31,7 +31,7 @@ Runtime reads use supported `rnstatus --json` and `rnpath --table --json` utilit
 - Single-admin first-run authentication, secure cookie settings, password hashing, and CSRF protection.
 - Responsive collapsed navigation for mobile browsers.
 
-All future management capabilities report disabled in v0.1.0. There are no management controls in the UI.
+All future management capabilities report disabled in v0.1.1. There are no management controls in the UI.
 
 ## Detection and supported deployments
 
@@ -46,12 +46,12 @@ Supported observation targets:
 
 Process-manager and Docker detection are evidence only. The backend abstraction is lifecycle-neutral: `ReticulumBackend` exposes `detect()`, `runtime_status()`, `paths()`, `interfaces()`, `clients()`, `config_view()`, and `capabilities()`.
 
-## Native installation
+## Native install and upgrade
 
 Requirements: Linux, Python 3.10+, and an existing Reticulum installation. For native installs, `rnstatus` and `rnpath` must be available to the current user on `PATH` or in the standard pipx/user location at `$HOME/.local/bin`. Ubuntu/Debian, Raspberry Pi OS 64-bit, ARM64, and x86_64 are targets.
 
 ```sh
-./install.sh
+./install.sh --config "$HOME/.reticulum/config"
 ```
 
 Run the native installer as the normal user who owns the Reticulum installation. Do not use `sudo`. The defaults are:
@@ -64,6 +64,52 @@ Run the native installer as the normal user who owns the Reticulum installation.
 When a user systemd session is available, the installer creates and starts `reticulum-bolt-on-admin.service` under the user's systemd configuration. Otherwise it prints the exact unprivileged launcher command. In both cases it prints the local URL, `http://127.0.0.1:8080/`. The generated launcher refuses to run the web GUI as root.
 
 If the selected Reticulum config is not readable by the normal user, do not elevate the entire native GUI. Use the isolated Docker/system observation-helper preparation described below; root is needed only to read that protected config and create helper-owned snapshot state.
+
+To upgrade a native installation, update the working copy and run the same installer again as the same normal user. The separate GUI state directory is reused, preserving the admin login, labels, and local history.
+
+```sh
+git pull --ff-only
+./install.sh --config "$HOME/.reticulum/config"
+```
+
+Custom locations remain explicit on both installation and removal:
+
+```sh
+PREFIX="$HOME/apps/reticulum-bolt-on-admin" \
+STATE_DIR="$HOME/.local/share/my-bolt-on-state" \
+./install.sh --config "$HOME/.reticulum/config"
+```
+
+## Native uninstall and clean reinstall
+
+Run the native uninstaller as the same normal user. Do not use `sudo`. It prints its exact removal/preservation plan and asks for confirmation. The default removes only the Bolt-On user service and application while preserving the GUI database, secret, login, labels, and local history.
+
+```sh
+./uninstall.sh
+```
+
+Reinstalling afterward restores the existing login, labels, and local history:
+
+```sh
+./install.sh --config "$HOME/.reticulum/config"
+```
+
+For a completely fresh GUI, explicitly purge Bolt-On state and then reinstall:
+
+```sh
+./uninstall.sh --purge
+./install.sh --config "$HOME/.reticulum/config"
+```
+
+`--purge` removes only the Bolt-On GUI state directory. It still does not touch Reticulum configuration, storage, identities, `rnsd`, Reticulum services, or Reticulum containers. Use the same overrides when uninstalling a custom installation:
+
+```sh
+PREFIX="$HOME/apps/reticulum-bolt-on-admin" \
+STATE_DIR="$HOME/.local/share/my-bolt-on-state" \
+./uninstall.sh
+```
+
+Use `--yes` only for a removal plan that has already been reviewed. After stopping the exact Bolt-On user service, the uninstaller verifies that no confirmed Bolt-On process remains. It reports any remaining listener on port 8080 but never kills an unrelated process merely for using that port.
 
 ## Docker deployment
 
@@ -86,6 +132,28 @@ Every 30 seconds the helper atomically replaces `config-view.json`, `runtime-sta
 
 The image intentionally includes `rns==1.5.7` for compatible utilities. Only the helper invokes them in the protected Docker architecture. The web process never invokes `rnstatus`, `rnpath`, or `rnsd`. CI exercises identity-derived RPC authentication on AMD64 and ARM64, explicit `rpc_key` authentication on AMD64, and verifies that neither helper nor web starts `rnsd`.
 
+### Docker/helper cleanup
+
+Run Docker cleanup from this repository with the same Bolt-On state paths used during setup. The fixed Compose project name targets only the Bolt-On helper and web resources. By default, snapshots and GUI state are preserved:
+
+```sh
+export STATE_DIR="$(pwd)/bolt-on-data"
+export BOLT_ON_STATE="$STATE_DIR/gui"
+export BOLT_ON_OBSERVER_DATA="$STATE_DIR/observer-input"
+./uninstall.sh --docker
+```
+
+For a fully clean Docker/helper reinstall, `--purge` also removes the two Bolt-On state directories. Elevated access is needed only when the isolated helper created root-owned snapshot state:
+
+```sh
+sudo STATE_DIR="$(pwd)/bolt-on-data" \
+  BOLT_ON_STATE="$(pwd)/bolt-on-data/gui" \
+  BOLT_ON_OBSERVER_DATA="$(pwd)/bolt-on-data/observer-input" \
+  ./uninstall.sh --docker --purge
+```
+
+Docker cleanup never removes volumes generically and never discovers, stops, or edits the production Reticulum container, service, Compose project, config, storage, or identities.
+
 ## Path-flood visibility
 
 Paths are grouped strictly by the exact non-empty Reticulum `via` hash. Defaults are informational warnings, never automated mitigation:
@@ -105,9 +173,9 @@ pip install -e '.[test]'
 pytest
 ```
 
-Development begins on `verification/v0.1.0-observer`. Do not merge, tag, or release before review. CI runs Python regression tests, builds and executes the container for `linux/amd64` and `linux/arm64`, validates both Reticulum utilities, and confirms that the observer starts without an `rnsd` process.
+Release work begins on a verification branch. Do not merge, tag, or release before review. CI runs Python regression tests, builds and executes the container for `linux/amd64` and `linux/arm64`, validates both Reticulum utilities, and confirms that the observer starts without an `rnsd` process.
 
-## Known v0.1.0 limitations
+## Known v0.1.1 limitations
 
 - Exact runtime fields vary by Reticulum version; unsupported values are shown as **Unavailable**.
 - Shared-instance reachability from the helper depends on the host deployment and IPC/network arrangement; failure is reported without fallback.
