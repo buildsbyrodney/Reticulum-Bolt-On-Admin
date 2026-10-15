@@ -34,19 +34,16 @@ trap diagnose ERR
 mkdir -p "$root/upstream-a" "$root/upstream-b" "$root/production" "$root/output-a" "$root/output-b"
 printf '%s\n' \
   '[reticulum]' '  share_instance = Yes' '  instance_name = bolt-on-path-upstream-a' '  enable_transport = Yes' \
-  '[interfaces]' '  [[CI TCP Server A]]' '    type = TCPServerInterface' '    enabled = Yes' \
-  '    listen_ip = 127.0.0.1' '    listen_port = 43241' > "$root/upstream-a/config"
+  '[interfaces]' '  [[CI TCP Client A]]' '    type = TCPClientInterface' '    enabled = Yes' \
+  '    target_host = 127.0.0.1' '    target_port = 43241' > "$root/upstream-a/config"
 printf '%s\n' \
   '[reticulum]' '  share_instance = Yes' '  instance_name = bolt-on-path-upstream-b' '  enable_transport = Yes' \
-  '[interfaces]' '  [[CI TCP Server B]]' '    type = TCPServerInterface' '    enabled = Yes' \
-  '    listen_ip = 127.0.0.1' '    listen_port = 43242' > "$root/upstream-b/config"
+  '[interfaces]' '  [[CI TCP Client B]]' '    type = TCPClientInterface' '    enabled = Yes' \
+  '    target_host = 127.0.0.1' '    target_port = 43241' > "$root/upstream-b/config"
 printf '%s\n' \
   '[reticulum]' '  share_instance = Yes' '  instance_name = bolt-on-path-production' '  enable_transport = No' \
-  '[interfaces]' \
-  '  [[CI TCP Client A]]' '    type = TCPClientInterface' '    enabled = Yes' \
-  '    target_host = 127.0.0.1' '    target_port = 43241' \
-  '  [[CI TCP Client B]]' '    type = TCPClientInterface' '    enabled = Yes' \
-  '    target_host = 127.0.0.1' '    target_port = 43242' > "$root/production/config"
+  '[interfaces]' '  [[CI TCP Server]]' '    type = TCPServerInterface' '    enabled = Yes' \
+  '    listen_ip = 127.0.0.1' '    listen_port = 43241' > "$root/production/config"
 chmod 0600 "$root/upstream-a/config" "$root/upstream-b/config" "$root/production/config"
 # The hardened rnsd containers run as uid 0 without DAC-bypass capabilities, so
 # only their private configuration trees are root-owned. Destination hashes are
@@ -61,21 +58,23 @@ run_rnsd() {
     --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$directory:/rns" \
     --user 0:0 "$IMAGE" rnsd --config /rns --service >/dev/null
 }
-run_rnsd "$upstream_a" "$root/upstream-a"
-run_rnsd "$upstream_b" "$root/upstream-b"
-
 wait_socket() {
   local instance=$1
   for attempt in $(seq 1 60); do
     python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(("\0rns/"+sys.argv[1]).encode())' "$instance" >/dev/null 2>&1 && return
-    test "$attempt" -lt 60
+    if test "$attempt" -ge 60; then
+      echo "Timed out waiting for shared instance: $instance" >&2
+      return 1
+    fi
     sleep 1
   done
 }
-wait_socket bolt-on-path-upstream-a
-wait_socket bolt-on-path-upstream-b
 run_rnsd "$production" "$root/production"
 wait_socket bolt-on-path-production
+run_rnsd "$upstream_a" "$root/upstream-a"
+run_rnsd "$upstream_b" "$root/upstream-b"
+wait_socket bolt-on-path-upstream-a
+wait_socket bolt-on-path-upstream-b
 
 docker run -d --name "$manager" --platform "$PLATFORM" --network host --read-only --cap-drop ALL \
   --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid -v "$root/production:/management:ro" \
@@ -93,7 +92,10 @@ docker run -d --name "$peer_b" --platform "$PLATFORM" --network host --read-only
 
 for attempt in $(seq 1 60); do
   test -s "$root/output-a/destinations.json" && test -s "$root/output-b/destinations.json" && break
-  test "$attempt" -lt 60
+  if test "$attempt" -ge 60; then
+    echo "Timed out waiting for destination fixtures" >&2
+    exit 1
+  fi
   sleep 1
 done
 a1=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destinations"][0])' "$root/output-a/destinations.json")
@@ -114,7 +116,11 @@ d=json.loads(sys.argv[1]); present={row.get("hash") for row in d.get("paths",[])
 raise SystemExit(0 if ((targets <= present) if mode == "present" else targets.isdisjoint(present)) else 1)' "$payload" "$mode" "$@"; then
       return
     fi
-    test "$attempt" -lt 90
+    if test "$attempt" -ge 90; then
+      echo "Timed out waiting for paths to become $mode: $*" >&2
+      echo "Last bounded path snapshot: $payload" >&2
+      return 1
+    fi
     sleep 1
   done
 }
