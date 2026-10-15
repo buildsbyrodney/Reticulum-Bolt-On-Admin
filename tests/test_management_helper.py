@@ -1,7 +1,7 @@
 import sys
 from types import SimpleNamespace
 
-from reticulum_bolt_on.management_helper import execute, read_paths
+from reticulum_bolt_on.management_helper import execute, probe_capabilities, read_paths
 
 
 class FakeReticulum:
@@ -73,6 +73,13 @@ def test_path_reader_requires_shared_instance_and_serializes_hashes(monkeypatch,
     assert success
     assert FakeReticulum.instances[-1].kwargs == {"configdir": str(tmp_path), "require_shared_instance": True}
     assert paths == [{"hash": "a" * 32, "via": "b" * 32, "hops": 1}]
+
+
+def test_rns_157_probe_disables_unsafe_per_interface_controls(tmp_path):
+    _existing_state_tree(tmp_path)
+    rns = SimpleNamespace(__version__="1.5.7", Reticulum=FakeReticulum)
+
+    assert probe_capabilities(rns, tmp_path) == ["drop-announces", "drop-path", "drop-via"]
 
 
 def test_helper_rejects_invalid_targets_before_constructing_rns(monkeypatch, tmp_path):

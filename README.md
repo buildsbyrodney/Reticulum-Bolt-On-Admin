@@ -41,8 +41,9 @@ The first native shared-instance backend supports the following when the exact R
 
 - dropping one exact 32-hex destination path;
 - dropping all current paths through one exact, non-empty 32-hex `via` transport, with current count and at most ten destination samples on the review page;
-- dropping all queued announces, clearly distinguished from dropping paths;
-- attaching, detaching, or reloading one positively known interface through the RNS per-interface API, without restarting `rnsd`.
+- dropping all queued announces, clearly distinguished from dropping paths.
+
+RNS 1.5.7 per-interface attach/detach/reload is deliberately reported as disabled. In particular, TCP client runtime names can differ from their configured section names, so a reload could detach successfully but fail to reattach. No interface control is attempted and `rnsd` is never restarted as a substitute.
 
 Each attempt records a bounded GUI-local audit event containing timestamp, action, target, success/failure, and allow-listed non-secret metadata. No credentials or production configuration are copied into audit records.
 
@@ -199,7 +200,7 @@ Release work begins on a verification branch. Do not merge, tag, or release befo
 - Docker detection is best-effort and read-only; the web container itself intentionally has no Docker socket.
 - systemd/process ownership is evidence, not authority to manage the service.
 - Management actions currently require a readable native installation using the existing user-authorized RNS 1.5.7 runtime. Docker/root-owned snapshot deployments remain Observer-only.
-- Per-interface control is available only when the native shared-instance backend positively supports the RNS attach/detach/reload operations; it never falls back to restarting `rnsd`.
+- Per-interface control is disabled for RNS 1.5.7 because its runtime/configured interface naming does not provide a safe, tested reload contract; it never falls back to restarting `rnsd`.
 - Configuration writes and all service/container restart operations remain intentionally unavailable.
 
 ## Provenance

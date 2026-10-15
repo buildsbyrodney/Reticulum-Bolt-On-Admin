@@ -8,6 +8,9 @@ from pathlib import Path
 
 HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
 INTERFACE_OPERATIONS = {"attach-interface", "detach-interface", "reload-interface"}
+SAFE_RNS_157_CAPABILITIES = {
+    "drop-path": "drop_path", "drop-via": "drop_all_via", "drop-announces": "drop_announce_queues",
+}
 REQUIRED_EXISTING_PATHS = (
     "config", "storage", "storage/cache", "storage/resources", "storage/identities",
     "storage/blackhole", "interfaces", "storage/cache/announces",
@@ -17,6 +20,16 @@ REQUIRED_EXISTING_PATHS = (
 def state_tree_ready(config_dir: Path) -> bool:
     return all((config_dir / relative).is_file() if relative == "config" else (config_dir / relative).is_dir()
                for relative in REQUIRED_EXISTING_PATHS)
+
+
+def probe_capabilities(rns, config_dir: Path) -> list[str]:
+    if str(getattr(rns, "__version__", "")) != "1.5.7" or not state_tree_ready(config_dir):
+        return []
+    # RNS 1.5.7 expands some live interface names (notably TCP clients),
+    # while reattach requires the configured section name. Advertising reload
+    # could therefore detach successfully and then fail to reattach.
+    return sorted(action for action, method in SAFE_RNS_157_CAPABILITIES.items()
+                  if hasattr(rns.Reticulum, method))
 
 
 def _result(success: bool, message: str, **metadata) -> int:
@@ -110,12 +123,7 @@ def main() -> None:
         try:
             import RNS
             version = str(getattr(RNS, "__version__", ""))
-            methods = {
-                "drop-path": "drop_path", "drop-via": "drop_all_via", "drop-announces": "drop_announce_queues",
-                "attach-interface": "attach_interface", "detach-interface": "detach_interface", "reload-interface": "reload_interface",
-            }
-            supported = sorted(action for action, method in methods.items()
-                               if version == "1.5.7" and state_tree_ready(args.config) and hasattr(RNS.Reticulum, method))
+            supported = probe_capabilities(RNS, args.config)
             raise SystemExit(_result(bool(supported), "Supported RNS management capability probe",
                                      rns_version=version or None, capabilities=supported))
         except ImportError:
