@@ -156,7 +156,12 @@ class ConfigManager:
         return backup
     def _backup(self, content: str) -> Path:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        backup = self.path.with_name(f"{self.path.name}.backup-{stamp}")
+        base_name = f"{self.path.name}.backup-{stamp}"
+        backup = self.path.with_name(base_name)
+        suffix = 1
+        while backup.exists():
+            backup = self.path.with_name(f"{base_name}-{suffix}")
+            suffix += 1
         shutil.copy2(self.path, backup)
         return backup
     def _trim_backups(self) -> None:

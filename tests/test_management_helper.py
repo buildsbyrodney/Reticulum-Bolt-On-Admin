@@ -15,9 +15,6 @@ class FakeReticulum:
     def drop_path(self, target): self.calls.append(("drop_path", target)); return True
     def drop_all_via(self, target): self.calls.append(("drop_all_via", target)); return True
     def drop_announce_queues(self): self.calls.append(("drop_announce_queues", None))
-    def attach_interface(self, name): self.calls.append(("attach_interface", name)); return True
-    def detach_interface(self, name): self.calls.append(("detach_interface", name)); return True
-    def reload_interface(self, name): self.calls.append(("reload_interface", name)); return True
     def get_path_table(self):
         self.calls.append(("get_path_table", None))
         return [{"hash": bytes.fromhex("a" * 32), "via": bytes.fromhex("b" * 32), "hops": 1}]
@@ -38,9 +35,6 @@ def test_helper_requires_shared_instance_for_every_supported_action(monkeypatch,
         ("drop-path", "a" * 32, "drop_path"),
         ("drop-via", "b" * 32, "drop_all_via"),
         ("drop-announces", None, "drop_announce_queues"),
-        ("attach-interface", "LAN", "attach_interface"),
-        ("detach-interface", "LAN", "detach_interface"),
-        ("reload-interface", "LAN", "reload_interface"),
     ]
 
     for action, target, expected_method in actions:
@@ -80,6 +74,31 @@ def test_rns_157_probe_disables_unsafe_per_interface_controls(tmp_path):
     rns = SimpleNamespace(__version__="1.5.7", Reticulum=FakeReticulum)
 
     assert probe_capabilities(rns, tmp_path) == ["drop-announces", "drop-path", "drop-via"]
+
+
+def test_new_incident_actions_use_transport_only_after_shared_attachment(monkeypatch, tmp_path):
+    class FakeTransport:
+        calls = []
+        @classmethod
+        def request_path(cls, target): cls.calls.append(("request_path", target))
+        @classmethod
+        def blackhole_identity(cls, target): cls.calls.append(("blackhole_identity", target)); return True
+        @classmethod
+        def unblackhole_identity(cls, target): cls.calls.append(("unblackhole_identity", target)); return True
+
+    FakeReticulum.instances.clear(); FakeTransport.calls.clear(); _existing_state_tree(tmp_path)
+    monkeypatch.setitem(sys.modules, "RNS", SimpleNamespace(Reticulum=FakeReticulum, Transport=FakeTransport))
+    for action, expected in (("request-path", "request_path"), ("blackhole-identity", "blackhole_identity"), ("unblackhole-identity", "unblackhole_identity")):
+        success, _ = execute(tmp_path, action, "a" * 32)
+        assert success and FakeReticulum.instances[-1].kwargs["require_shared_instance"] is True
+        assert FakeTransport.calls[-1] == (expected, bytes.fromhex("a" * 32))
+
+
+def test_helper_no_longer_accepts_live_interface_operations(monkeypatch, tmp_path):
+    _existing_state_tree(tmp_path)
+    monkeypatch.setitem(sys.modules, "RNS", SimpleNamespace(Reticulum=FakeReticulum))
+    for action in ("attach-interface", "detach-interface", "reload-interface"):
+        assert execute(tmp_path, action, "LAN")[0] is False
 
 
 def test_helper_rejects_invalid_targets_before_constructing_rns(monkeypatch, tmp_path):

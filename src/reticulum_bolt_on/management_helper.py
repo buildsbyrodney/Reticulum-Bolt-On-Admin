@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
-INTERFACE_OPERATIONS = {"attach-interface", "detach-interface", "reload-interface"}
 SAFE_RNS_157_CAPABILITIES = {
     "drop-path": "drop_path", "drop-via": "drop_all_via", "drop-announces": "drop_announce_queues",
     "request-path": "request_path", "blackhole-identity": "blackhole_identity", "unblackhole-identity": "unblackhole_identity",
@@ -81,9 +80,6 @@ def execute(config_dir: Path, action: str, target: str | None) -> tuple[bool, st
         if not target or not HEX32.fullmatch(target):
             return False, "Target must be exactly 32 hexadecimal characters"
         target_bytes = bytes.fromhex(target)
-    elif action in INTERFACE_OPERATIONS:
-        if not target or len(target) > 128 or any(ord(char) < 32 for char in target):
-            return False, "Interface name is invalid"
     elif action != "drop-announces":
         return False, "Unsupported management action"
 
@@ -116,9 +112,6 @@ def execute(config_dir: Path, action: str, target: str | None) -> tuple[bool, st
         if action == "unblackhole-identity":
             success = RNS.Transport.unblackhole_identity(target_bytes)
             return bool(success), f"Removed blackhole for identity {target.lower()}" if success else "Identity was not blackholed"
-        method = getattr(reticulum, action.replace("-interface", "_interface"))
-        success = method(target)
-        return bool(success), f"Interface {target} {action.removesuffix('-interface')} completed" if success else "Reticulum did not complete the interface operation"
     except Exception:
         return False, "Reticulum rejected or failed the requested management operation"
 
@@ -126,7 +119,7 @@ def execute(config_dir: Path, action: str, target: str | None) -> tuple[bool, st
 def main() -> None:
     parser = argparse.ArgumentParser(description="Narrow shared-instance-only Reticulum management helper")
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("action", choices=("probe", "read-paths", "drop-path", "drop-via", "drop-announces", "request-path", "blackhole-identity", "unblackhole-identity", *sorted(INTERFACE_OPERATIONS)))
+    parser.add_argument("action", choices=("probe", "read-paths", "drop-path", "drop-via", "drop-announces", "request-path", "blackhole-identity", "unblackhole-identity"))
     parser.add_argument("target", nargs="?")
     args = parser.parse_args()
     if args.action == "probe":

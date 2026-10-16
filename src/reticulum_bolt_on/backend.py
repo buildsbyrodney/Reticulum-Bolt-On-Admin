@@ -56,8 +56,6 @@ class ReticulumBackend(ABC):
     def manage_identity(self, action: str, identity: str) -> ManagementResult:
         return ManagementResult(False, "Identity management is unavailable for this backend")
 
-    def manage_interface(self, operation: str, name: str) -> ManagementResult:
-        return ManagementResult(False, "Per-interface management is unavailable for this backend")
 
 
 def command_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -314,12 +312,6 @@ class SharedInstanceBackend(ReticulumBackend):
             return ManagementResult(False, "Identity must be exactly 32 hexadecimal characters")
         return self._managed(action, identity)
 
-    def manage_interface(self, operation: str, name: str) -> ManagementResult:
-        if operation not in {"attach", "detach", "reload"}:
-            return ManagementResult(False, "Unsupported interface operation")
-        if not name or len(name) > 128 or any(ord(char) < 32 for char in name):
-            return ManagementResult(False, "Interface name is invalid")
-        return self._managed(f"{operation}-interface", name)
 
 
 class SnapshotBackend(ReticulumBackend):
