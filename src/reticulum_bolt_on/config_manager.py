@@ -95,10 +95,11 @@ def validate(name: str, values: dict[str, str]) -> None:
         raise ConfigValidationError("TCPServerInterface requires a listen port")
 
 
-def render_section(name: str, values: dict[str, str], original: InterfaceSection | None = None) -> list[str]:
+def render_section(name: str, values: dict[str, str], original: InterfaceSection | None = None,
+                   remove: set[str] | None = None) -> list[str]:
     """Patch recognized keys in place and retain every unknown/comment line."""
     validate(name, values)
-    desired = {key.lower(): str(value) for key, value in values.items()}
+    desired = {key.lower(): str(value) for key, value in values.items()}; remove = remove or set()
     if original is None:
         return [f"[[{name}]]\n", *[f"{key} = {value}\n" for key, value in desired.items()]]
     output = [f"[[{name}]]\n"]; seen: set[str] = set()
@@ -106,6 +107,8 @@ def render_section(name: str, values: dict[str, str], original: InterfaceSection
         if "=" not in line or line.lstrip().startswith("#"):
             output.append(line); continue
         raw, old = line.split("=", 1); key = raw.strip().lower()
+        if key in remove:
+            continue
         if key in desired:
             output.append(f"{raw.rstrip()} = {desired[key]}\n"); seen.add(key)
         else: output.append(line)

@@ -333,6 +333,11 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         for key in ("type", "enabled", "mode", "target_host", "target_port", "listen_host", "listen_ip", "listen_port", "port", "device", "group_id", "network_name", "passphrase", "ifac_netname", "ifac_passphrase", "ifac_size"):
             if key in request.form and request.form.get(key, "").strip(): values[key] = request.form[key].strip()
         if "enabled" in request.form: values["enabled"] = "yes" if request.form.get("enabled") in {"yes", "true", "1", "on"} else "no"
+        if request.form.get("ifac_enabled") == "no":
+            for key in ("network_name", "passphrase", "ifac_netname", "ifac_passphrase", "ifac_size"):
+                values.pop(key, None)
+        elif request.form.get("ifac_size_mode") == "default":
+            values.pop("ifac_size", None)
         # Reticulum accepts both legacy IFAC and current connection-field names.
         # Keep the spelling already present in a section rather than creating two
         # competing values when an edit form is submitted unchanged.
@@ -374,11 +379,14 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
             after, diff = manager.delete_preview(before, original); target, action = name, "delete_interface"
         else:
             values = _posted_values(original.values() if original else {})
+            remove_ifac = set()
+            if request.form.get("ifac_enabled") == "no": remove_ifac = {"network_name", "passphrase", "ifac_netname", "ifac_passphrase", "ifac_size"}
+            elif request.form.get("ifac_size_mode") == "default": remove_ifac = {"ifac_size"}
             if operation in {"enable", "disable"}: values["enabled"] = "yes" if operation == "enable" else "no"
             if operation == "edit" and values.get("type") == "TCPClientInterface" and values.get("target_host") != original.values().get("target_host"):
                 evidence = _interface_evidence(observe(), name)
                 if any(evidence.values()): abort(400, "This interface has observed Reticulum connectivity. Create or clone a replacement instead of changing target_host.")
-            replacement = render_section(name, values, original)
+            replacement = render_section(name, values, original, remove_ifac)
             after, diff = manager.preview(before, replacement, original)
             target, action = name, f"{operation}_interface"
         backup_clone = operation == "edit" and request.form.get("backup_clone") == "yes"

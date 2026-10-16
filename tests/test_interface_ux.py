@@ -19,6 +19,21 @@ def test_interface_forms_include_ifac_without_displaying_secret_values():
     assert "Target Host" in page and "clone or create a replacement" in page
 
 
+def test_task_presets_and_managed_style_help_are_present():
+    page = (ROOT / "src/reticulum_bolt_on/templates/interface_form.html").read_text()
+    for text in ("What are you trying to do?", "User Access TCP", "Trusted Backbone TCP", "Trusted TCP Client",
+                 "Local AutoInterface", "RNode / Radio Interface", "Public TCP", "Trusted TCP", "Trusted Upstream",
+                 "boundary", "4242", "4243", "TCP Server: let others connect inward", "Using Tailscale"):
+        assert text in page
+    assert "Advanced interface type and mode" in page
+
+
+def test_ifac_enable_and_size_workflow_is_present():
+    page = (ROOT / "src/reticulum_bolt_on/templates/interface_form.html").read_text()
+    for text in ("Enable IFAC", "Use interface default", "Custom size in bits", "ifac_size_mode", "ifac-enabled"):
+        assert text in page
+
+
 def test_no_live_interface_lifecycle_routes_returned_to_navigation():
     source = (ROOT / "src/reticulum_bolt_on/app.py").read_text()
     assert '"/management/interface/review"' not in source

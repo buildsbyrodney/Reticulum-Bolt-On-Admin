@@ -38,3 +38,11 @@ def test_review_diff_hides_secrets():
     rendered = redact_diff(diff)
     assert "old-secret" not in rendered and "new-secret" not in rendered
     assert "target_host = safe.example" in rendered and rendered.count("[present, hidden]") == 2
+
+
+def test_render_can_remove_ifac_fields_without_touching_unknown_fields():
+    source = "[[LAN]]\ntype = TCPServerInterface\nlisten_port = 4242\npassphrase = secret\nifac_size = 64\nunknown = keep\n"
+    section = sections(source)[0]
+    rendered = "".join(render_section("LAN", {"type": "TCPServerInterface", "listen_port": "4242"}, section,
+                                       {"passphrase", "ifac_size"}))
+    assert "passphrase" not in rendered and "ifac_size" not in rendered and "unknown = keep" in rendered
