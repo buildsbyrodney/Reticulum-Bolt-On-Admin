@@ -119,7 +119,27 @@ $escapedConfig = $selectedConfig.Replace("'", "''"); $escapedState = $StateRoot.
 & '$($AppRoot.Replace("'", "''"))\\venv\\Scripts\\waitress-serve.exe' --listen=127.0.0.1:8080 --call 'reticulum_bolt_on.app:create_app'
 "@ | Set-Content -LiteralPath $launcher -Encoding utf8
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
+$taskRunner = Join-Path $AppRoot 'task-runner.py'
+$secretJson = (Join-Path $StateRoot 'secret' | ConvertTo-Json -Compress)
+$databaseJson = (Join-Path $StateRoot 'observer.db' | ConvertTo-Json -Compress)
+$configJson = ($selectedConfig | ConvertTo-Json -Compress)
+$toolsJson = (Split-Path $rnstatus | ConvertTo-Json -Compress)
+@"
+import os
+from pathlib import Path
+os.environ["BOLT_ON_SECRET_KEY"] = Path($secretJson).read_text(encoding="utf-8").strip()
+os.environ["BOLT_ON_DATABASE"] = $databaseJson
+os.environ["RETICULUM_CONFIG"] = $configJson
+os.environ["BOLT_ON_RNS_PYTHON"] = $($python | ConvertTo-Json -Compress)
+os.environ["PATH"] = $toolsJson + ";" + os.environ.get("PATH", "")
+from waitress import serve
+from reticulum_bolt_on.app import create_app
+serve(create_app(), host="127.0.0.1", port=8080)
+"@ | Set-Content -LiteralPath $taskRunner -Encoding utf8
+
+# The task executes Python directly, not a PowerShell parent that can leave a
+# child server orphaned when Task Scheduler stops it.
+$action = New-ScheduledTaskAction -Execute $venvPython -Argument ('"{0}"' -f $taskRunner)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Description 'Reticulum Bolt-On Admin (current user only)' -Force | Out-Null
 if (-not $NoStart) { Start-ScheduledTask -TaskName $TaskName }
