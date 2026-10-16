@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e '.[test]'
-      - run: pytest tests/test_detection.py tests/test_management_helper.py tests/test_windows_backend.py tests/test_windows_support.py
+      - run: pytest tests/test_detection.py tests/test_management_helper.py tests/test_subprocess_runner.py tests/test_windows_backend.py tests/test_windows_support.py
       - name: Parse Windows lifecycle scripts
         shell: pwsh
         run: |
