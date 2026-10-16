@@ -106,6 +106,46 @@ STATE_DIR="$HOME/.local/share/my-bolt-on-state" \
 ./install.sh --config "$HOME/.reticulum/config"
 ```
 
+### Native Windows
+
+Windows 10/11 native installs are supported for a normal user-owned Reticulum
+1.5.7 installation. No Administrator elevation, Windows service, firewall
+change, or Reticulum lifecycle action is used. The application lives in
+`%LOCALAPPDATA%\\Reticulum-Bolt-On-Admin` and the separately preserved GUI
+state (login, labels, audit/history, and secret) lives in
+`%LOCALAPPDATA%\\Reticulum-Bolt-On-Admin-State`. The installer looks for
+`rnstatus.exe` and `rnpath.exe` on `PATH` and in the current user's Python
+Scripts directories, including `%APPDATA%\\Python\\Python312\\Scripts`.
+
+From a PowerShell prompt in a checked-out copy of this repository:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install.ps1 -Config "$HOME\.reticulum\config"
+```
+
+The preflight runs before creating Bolt-On files. It requires Python 3.10+ and
+virtual-environment support, exactly `rns==1.5.7`, both Reticulum utilities, a
+readable config, and a free loopback port 8080. It reports shared-instance
+reachability; an unavailable instance is displayed as **Unavailable** and
+never causes `rnsd` to be started. The GUI uses Waitress as the normal user,
+listening only on `127.0.0.1:8080`.
+
+The installer creates only the `Reticulum-Bolt-On-Admin` current-user scheduled
+task at logon. It never controls `rnsd`. To start, stop, and inspect it:
+
+```powershell
+Start-ScheduledTask -TaskName Reticulum-Bolt-On-Admin
+Stop-ScheduledTask -TaskName Reticulum-Bolt-On-Admin
+Get-ScheduledTask -TaskName Reticulum-Bolt-On-Admin
+```
+
+Upgrade from an updated checkout with the same command:
+
+```powershell
+.\install.ps1 -Config "$HOME\.reticulum\config"
+```
+
 ## Native uninstall and clean reinstall
 
 Run the native uninstaller as the same normal user. Do not use `sudo`. It prints its exact removal/preservation plan and asks for confirmation. The default removes only the Bolt-On user service and application while preserving the GUI database, secret, login, labels, and local history.
@@ -126,6 +166,19 @@ For a completely fresh GUI, explicitly purge Bolt-On state and then reinstall:
 ./uninstall.sh --purge
 ./install.sh --config "$HOME/.reticulum/config"
 ```
+
+On Windows, the equivalent default removal and explicit clean removal are:
+
+```powershell
+.\uninstall.ps1
+.\uninstall.ps1 -Purge
+```
+
+The default Windows removal unregisters and stops only the named current-user
+Bolt-On task and removes only the Bolt-On application. It preserves the
+separate state directory. `-Purge` additionally removes that state directory;
+neither form changes Reticulum configuration, storage, identities, `rnsd`, or
+unrelated processes listening on port 8080.
 
 `--purge` removes only the Bolt-On GUI state directory. It still does not touch Reticulum configuration, storage, identities, `rnsd`, Reticulum services, or Reticulum containers. Use the same overrides when uninstalling a custom installation:
 

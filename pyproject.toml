@@ -9,7 +9,7 @@ description = "A conservative observer-first web admin with capability-gated man
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-dependencies = ["Flask>=3.1,<4", "gunicorn>=23,<24"]
+dependencies = ["Flask>=3.1,<4", "gunicorn>=23,<24", "waitress>=3,<4"]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "pytest-cov>=5,<8"]

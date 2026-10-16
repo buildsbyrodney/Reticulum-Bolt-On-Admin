@@ -29,7 +29,13 @@ def common_config_paths(env: dict[str, str] | None = None, homes: Iterable[Path]
     if env.get("RETICULUM_CONFIG"):
         supplied = Path(env["RETICULUM_CONFIG"])
         candidates.append(supplied / "config" if supplied.is_dir() else supplied)
-    home = Path(env.get("HOME") or Path.home())
+    home = Path(env.get("HOME") or env.get("USERPROFILE") or Path.home())
+    # Reticulum's normal per-user location remains ~/.reticulum on Windows.
+    # AppData is also checked because it is a common explicit configdir choice.
+    if os.name == "nt":
+        for variable in ("APPDATA", "LOCALAPPDATA"):
+            if env.get(variable):
+                candidates.append(Path(env[variable]) / "Reticulum" / "config")
     discovered_homes = list(homes) if homes is not None else [home, Path("/root")]
     home_parent = Path("/home")
     if homes is None and home_parent.is_dir():

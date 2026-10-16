@@ -70,6 +70,15 @@ class RNSManagementClient:
 
     @staticmethod
     def _discover_interpreter() -> Path | None:
+        # Windows console-script launchers are executable stubs, not shebang
+        # scripts. The installer supplies the already-existing user's Python
+        # explicitly so Management Mode can use that RNS 1.5.7 runtime without
+        # installing RNS into the GUI venv or constructing any fallback node.
+        configured = os.environ.get("BOLT_ON_RNS_PYTHON")
+        if configured:
+            candidate = Path(configured)
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
         utility = shutil.which("rnstatus")
         if not utility:
             return None
