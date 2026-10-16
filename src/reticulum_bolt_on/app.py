@@ -16,12 +16,11 @@ from .detection import detect
 from .models import ManagementResult
 from .parsers import bounded_paths, merge_interfaces, path_health
 from .storage import ObserverStore
+from .config_manager import ConfigConflict, ConfigManager, ConfigValidationError, INTERFACE_TYPES, render_section, sections, safe_values
 
 
 HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
-MANAGEMENT_CAPABILITIES = (
-    "drop_path", "drop_via", "drop_announces", "attach_interface", "detach_interface", "reload_interface"
-)
+MANAGEMENT_CAPABILITIES = ("drop_path", "drop_via", "drop_announces", "request_path", "blackhole_identity", "unblackhole_identity", "edit_config")
 
 
 def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend | None = None) -> Flask:
@@ -42,6 +41,7 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     )
     app.extensions["observer_store"] = store
     app.extensions["reticulum_backend"] = adapter
+    app.extensions["pending_config_reviews"] = {}
 
     def csrf_token() -> str:
         if "csrf" not in session: session["csrf"] = secrets.token_urlsafe(32)
@@ -80,12 +80,25 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         clients = runtime.clients if runtime else []
         snapshot = {"interfaces": [row["name"] for row in interfaces if row.get("runtime")], "clients": [row["key"] for row in clients], "path_count": len(paths)}
         if runtime: store.record_observation(health, snapshot)
+        capabilities = dict(adapter.capabilities(), edit_config=config_write_available())
         return {"detection": detection, "runtime": runtime, "config": config_view, "interfaces": interfaces,
-                "paths": paths, "health": health, "clients": clients, "labels": labels, "capabilities": adapter.capabilities()}
+                "paths": paths, "health": health, "clients": clients, "labels": labels, "capabilities": capabilities}
+
+    def config_manager() -> ConfigManager | None:
+        # Snapshot/Docker configurations are deliberately read-only. Only a selected,
+        # directly writable native config gets this local writer.
+        path = getattr(adapter, "config_path", None)
+        if not path or getattr(adapter, "snapshot_path", None): return None
+        return ConfigManager(Path(path))
+
+    def config_write_available() -> bool:
+        manager = config_manager()
+        return bool(manager and manager.path.is_file() and os.access(manager.path, os.W_OK))
 
     @app.context_processor
     def common():
         capabilities = adapter.capabilities()
+        capabilities = dict(capabilities, edit_config=config_write_available())
         return {"observer_mode": True, "capabilities": capabilities,
                 "management_available": any(capabilities.get(name, False) for name in MANAGEMENT_CAPABILITIES)}
 
@@ -124,6 +137,26 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     @login_required
     def interfaces(): return render_template("interfaces.html", **observe())
 
+    @app.get("/interfaces/config")
+    @login_required
+    def interface_config():
+        model = observe()
+        return render_template("interface_config.html", **model, writable=config_write_available(), supported_types=sorted(INTERFACE_TYPES))
+
+    @app.route("/deployment", methods=["GET", "POST"])
+    @login_required
+    def deployment():
+        if request.method == "POST":
+            require_csrf(); choice = request.form.get("deployment_type", "")
+            if choice not in {"linux-systemd", "linux-manual", "windows", "docker-compose", "other"}: abort(400, "Invalid deployment type")
+            store.save_setting("deployment_type", choice); flash("Deployment preference saved. Runtime evidence will still be required for lifecycle actions.", "info")
+            return redirect(url_for("deployment"))
+        model = observe(); selected = model["detection"].selected
+        saved = store.setting("deployment_type", "other")
+        # No lifecycle command is inferred from preference alone in v0.3.0.
+        return render_template("deployment.html", selected=selected, saved=saved, config_writable=config_write_available(),
+                               restart_available=False, evidence="Ambiguous — no lifecycle action is enabled until an exact runtime correlation is implemented.")
+
     @app.get("/paths")
     @login_required
     def paths():
@@ -149,6 +182,10 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     @login_required
     def management():
         return render_template("management.html", **observe())
+
+    @app.get("/incident-recovery")
+    @login_required
+    def incident_recovery(): return render_template("incident_recovery.html", **observe())
 
     def require_capability(name: str) -> None:
         if not adapter.capabilities().get(name, False):
@@ -201,6 +238,23 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
                               "This drops queued announces on all interfaces. It does not remove destination paths.",
                               [("Scope", "All interface announce queues"), ("Paths", "Not removed")])
 
+    @app.post("/management/request-path/review")
+    @login_required
+    def review_request_path():
+        require_csrf(); require_capability("request_path")
+        destination = request.form.get("destination", "").strip().lower()
+        if not HEX32.fullmatch(destination): abort(400, "Destination must be exactly 32 hexadecimal characters")
+        return pending_review("request_path", destination, "Review path request", "This asks the existing shared Reticulum instance to request one exact destination path. It never starts another Reticulum instance.", [("Destination", destination)])
+
+    @app.post("/management/<identity_action>/review-identity")
+    @login_required
+    def review_identity(identity_action: str):
+        if identity_action not in {"blackhole", "unblackhole"}: abort(404)
+        require_csrf(); action = f"{identity_action}_identity"; require_capability(action)
+        identity = request.form.get("identity", "").strip().lower()
+        if not HEX32.fullmatch(identity): abort(400, "Identity must be exactly 32 hexadecimal characters")
+        return pending_review(action, identity, f"Review {identity_action} identity", "This operates only on the exact supplied Reticulum identity hash; no identity is inferred from network addresses.", [("Identity", identity)])
+
     @app.post("/management/interface/review")
     @login_required
     def review_interface():
@@ -237,6 +291,8 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
             if action == "drop_path": result = adapter.drop_path(target)
             elif action == "drop_via": result = adapter.drop_paths_via(target)
             elif action == "drop_announces": result = adapter.drop_announce_queues()
+            elif action == "request_path": result = adapter.request_path(target)
+            elif action in {"blackhole_identity", "unblackhole_identity"}: result = adapter.manage_identity(action.replace("_", "-"), target)
             elif action in {"attach_interface", "detach_interface", "reload_interface"}:
                 result = adapter.manage_interface(action.removesuffix("_interface"), target)
             else: abort(400, "Unsupported management action")
@@ -247,6 +303,92 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         store.record_audit(action, target, result.success, metadata)
         session.pop("pending_management", None)
         return render_template("management_result.html", action=action, target=target, result=result)
+
+    def _interface_evidence(model: dict[str, Any], name: str) -> dict[str, bool]:
+        row = next((item for item in model["interfaces"] if item.get("name") == name), {})
+        traffic = bool((row.get("rx_bytes") or 0) + (row.get("tx_bytes") or 0))
+        up = row.get("runtime_status") == "Up" or bool(row.get("runtime"))
+        associated = any(str(path.get("interface") or "") == name for path in model["paths"])
+        return {"up": up, "traffic": traffic, "path_association": associated}
+
+    def _posted_values(existing: dict[str, str] | None = None) -> dict[str, str]:
+        values = dict(existing or {})
+        for key in ("type", "enabled", "mode", "target_host", "target_port", "listen_host", "listen_ip", "listen_port", "port", "device", "group_id"):
+            if key in request.form and request.form.get(key, "").strip(): values[key] = request.form[key].strip()
+        if "enabled" in request.form: values["enabled"] = "yes" if request.form.get("enabled") in {"yes", "true", "1", "on"} else "no"
+        return values
+
+    def _store_config_review(action: str, target: str, expected: str, content: str, metadata: dict[str, Any]) -> str:
+        token = secrets.token_urlsafe(24)
+        app.extensions["pending_config_reviews"][token] = {"action": action, "target": target, "expected": expected,
+            "content": content, "metadata": metadata, "issued_at": time.time()}
+        session["pending_config_review"] = token
+        return token
+
+    @app.post("/interfaces/config/review")
+    @login_required
+    def review_interface_config():
+        require_csrf(); manager = config_manager()
+        if not manager or not config_write_available(): abort(403, "Persistent configuration is read-only for this deployment")
+        operation = request.form.get("operation", "").strip().lower()
+        if operation not in {"create", "edit", "clone", "enable", "disable", "delete"}: abort(400, "Invalid interface operation")
+        before, expected = manager.read(); available = {item.name: item for item in sections(before)}
+        name = request.form.get("name", "").strip(); original = available.get(name)
+        if operation == "create":
+            name = request.form.get("new_name", "").strip()
+            if name in available: abort(400, "Interface section name already exists")
+            original = None
+        elif not original: abort(400, "Configured interface was not found")
+        if operation == "clone":
+            new_name = request.form.get("new_name", "").strip()
+            if new_name in available: abort(400, "Interface section name already exists")
+            values = _posted_values(original.values()); values["enabled"] = "no"
+            replacement = render_section(new_name, values, original)
+            after, diff = manager.preview(before, replacement, None)
+            target, action = new_name, "clone_interface"
+        elif operation == "delete":
+            after, diff = manager.delete_preview(before, original); target, action = name, "delete_interface"
+        else:
+            values = _posted_values(original.values() if original else {})
+            if operation in {"enable", "disable"}: values["enabled"] = "yes" if operation == "enable" else "no"
+            if operation == "edit" and values.get("type") == "TCPClientInterface" and values.get("target_host") != original.values().get("target_host"):
+                evidence = _interface_evidence(observe(), name)
+                if any(evidence.values()): abort(400, "This interface has observed Reticulum connectivity. Create or clone a replacement instead of changing target_host.")
+            replacement = render_section(name, values, original)
+            after, diff = manager.preview(before, replacement, original)
+            target, action = name, f"{operation}_interface"
+        backup_clone = operation == "edit" and request.form.get("backup_clone") == "yes"
+        if backup_clone:
+            clone_name = f"{name} - Backup {time.strftime('%Y-%m-%d %H%M')}"
+            if clone_name in available: clone_name += " 2"
+            clone_values = original.values(); clone_values["enabled"] = "no"
+            clone_lines = render_section(clone_name, clone_values, original)
+            # Insert backup before the edited original, preserving its full section including hidden credentials.
+            lines = after.splitlines(keepends=True); replacement_at = next(item.start for item in sections(after) if item.name == name)
+            lines[replacement_at:replacement_at] = clone_lines + ["\n"]
+            after = "".join(lines)
+            diff = "".join(__import__("difflib").unified_diff(before.splitlines(True), after.splitlines(True), "config (current)", "config (proposed)"))
+        _store_config_review(action, target, expected, after, {"backup_clone": backup_clone, "secret_fields_present": any("[present, hidden]" in value for value in safe_values((original.values() if original else {})).values())})
+        details = [("Action", action.replace("_", " ")), ("Interface", target), ("Backup clone", "A disabled backup clone will copy hidden credentials." if backup_clone else "Not selected"),
+                   ("Restart", "Save only — lifecycle evidence is not positively identified")]
+        return render_template("config_review.html", action=action, target=target, details=details, diff=diff, restart_available=False)
+
+    @app.post("/interfaces/config/execute")
+    @login_required
+    def execute_interface_config():
+        require_csrf(); token = session.get("pending_config_review"); pending = app.extensions["pending_config_reviews"].pop(token, None)
+        session.pop("pending_config_review", None)
+        if not pending or time.time() - pending["issued_at"] > 300: abort(400, "Configuration review is missing or expired")
+        if request.form.get("confirm") != "yes": abort(400, "Explicit confirmation is required")
+        manager = config_manager()
+        if not manager: abort(403, "Persistent configuration is read-only for this deployment")
+        try: backup = manager.apply(pending["expected"], pending["content"])
+        except ConfigConflict as error: abort(409, str(error))
+        except (ConfigValidationError, OSError) as error: abort(400, f"Configuration was not written: {error}")
+        metadata = dict(pending["metadata"]); metadata["backup_created"] = True; metadata["restart_requested"] = False
+        store.record_audit(pending["action"], pending["target"], True, metadata)
+        flash(f"Configuration saved atomically. Backup created at {backup.name}. Restart Reticulum manually to apply changes.", "info")
+        return redirect(url_for("interfaces"))
 
     @app.post("/labels")
     @login_required

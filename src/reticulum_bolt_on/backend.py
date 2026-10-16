@@ -50,6 +50,12 @@ class ReticulumBackend(ABC):
     def drop_announce_queues(self) -> ManagementResult:
         return ManagementResult(False, "Drop queued announces is unavailable for this backend")
 
+    def request_path(self, destination: str) -> ManagementResult:
+        return ManagementResult(False, "Request path is unavailable for this backend")
+
+    def manage_identity(self, action: str, identity: str) -> ManagementResult:
+        return ManagementResult(False, "Identity management is unavailable for this backend")
+
     def manage_interface(self, operation: str, name: str) -> ManagementResult:
         return ManagementResult(False, "Per-interface management is unavailable for this backend")
 
@@ -61,7 +67,7 @@ def command_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
 class RNSManagementClient:
     """Narrow native boundary that refuses independent RNS fallback."""
 
-    ACTIONS = frozenset({"drop-path", "drop-via", "drop-announces", "attach-interface", "detach-interface", "reload-interface"})
+    ACTIONS = frozenset({"drop-path", "drop-via", "drop-announces", "request-path", "blackhole-identity", "unblackhole-identity"})
 
     def __init__(self, config_dir: Path, interpreter: Path | None = None, runner: Runner = command_runner):
         self.config_dir = config_dir
@@ -264,9 +270,11 @@ class SharedInstanceBackend(ReticulumBackend):
             probe = getattr(self.manager, "supports", None)
             return bool(probe(action) if probe else True)
         return {"observe": True, "labels": True, "drop_path": supported("drop-path"),
-                "drop_via": supported("drop-via"), "drop_announces": supported("drop-announces"),
-                "attach_interface": supported("attach-interface"), "detach_interface": supported("detach-interface"),
-                "reload_interface": supported("reload-interface"), "edit_config": False, "restart_service": False,
+                "drop_via": supported("drop-via"), "drop_announces": supported("drop-announces"), "request_path": supported("request-path"),
+                "blackhole_identity": supported("blackhole-identity"), "unblackhole_identity": supported("unblackhole-identity"),
+                # v0.3.0 intentionally retires unsafe live lifecycle controls.
+                "attach_interface": False, "detach_interface": False,
+                "reload_interface": False, "edit_config": False, "restart_service": False,
                 "transport_enable": False}
 
     def _managed(self, action: str, target: str | None = None) -> ManagementResult:
@@ -296,6 +304,15 @@ class SharedInstanceBackend(ReticulumBackend):
 
     def drop_announce_queues(self) -> ManagementResult:
         return self._managed("drop-announces")
+
+    def request_path(self, destination: str) -> ManagementResult:
+        if not HEX32.fullmatch(destination): return ManagementResult(False, "Destination must be exactly 32 hexadecimal characters")
+        return self._managed("request-path", destination)
+
+    def manage_identity(self, action: str, identity: str) -> ManagementResult:
+        if action not in {"blackhole-identity", "unblackhole-identity"} or not HEX32.fullmatch(identity):
+            return ManagementResult(False, "Identity must be exactly 32 hexadecimal characters")
+        return self._managed(action, identity)
 
     def manage_interface(self, operation: str, name: str) -> ManagementResult:
         if operation not in {"attach", "detach", "reload"}:

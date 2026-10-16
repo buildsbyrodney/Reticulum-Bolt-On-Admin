@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reticulum-bolt-on-admin"
-version = "0.2.0"
+version = "0.3.0"
 description = "A conservative observer-first web admin with capability-gated management for existing Reticulum installations"
 readme = "README.md"
 requires-python = ">=3.10"

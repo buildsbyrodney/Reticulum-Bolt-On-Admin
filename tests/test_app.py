@@ -172,18 +172,15 @@ def test_drop_via_review_is_exact_bounded_and_refreshes_visible_paths(tmp_path):
     assert detail["metadata"]["sample_count"] == 10
 
 
-def test_queued_announces_and_interface_actions_are_confirmed_and_audited(tmp_path):
+def test_queued_announces_are_confirmed_and_audited(tmp_path):
     backend = ManagementBackend(tmp_path / "config")
     app, client = logged_client(tmp_path, backend)
     review = client.post("/management/drop-announces/review", data={"csrf_token":"token"})
     assert review.status_code == 200 and "does not remove destination paths" in review.get_data(as_text=True)
     assert client.post("/management/drop_announces/execute", data={"csrf_token":"token", "confirm":"yes"}).status_code == 200
 
-    review = client.post("/management/interface/review", data={"csrf_token":"token", "operation":"reload", "name":"LAN"})
-    assert review.status_code == 200 and "does not restart rnsd" in review.get_data(as_text=True)
-    assert client.post("/management/reload_interface/execute", data={"csrf_token":"token", "confirm":"yes"}).status_code == 200
-    assert backend.calls == [("drop_announces", "all interfaces"), ("reload_interface", "LAN")]
-    assert len(_audit_rows(app)) == 2
+    assert backend.calls == [("drop_announces", "all interfaces")]
+    assert len(_audit_rows(app)) == 1
 
 
 def test_unsupported_management_is_disabled_and_failure_changes_nothing_unrelated(tmp_path):

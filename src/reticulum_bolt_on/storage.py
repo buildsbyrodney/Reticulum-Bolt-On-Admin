@@ -20,6 +20,7 @@ class ObserverStore:
         CREATE TABLE IF NOT EXISTS path_history(id INTEGER PRIMARY KEY,observed_at INTEGER NOT NULL,total_paths INTEGER NOT NULL,unique_vias INTEGER NOT NULL,top_via TEXT,top_count INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,occurred_at INTEGER NOT NULL,kind TEXT NOT NULL,severity TEXT NOT NULL,message TEXT NOT NULL,detail_json TEXT);
         CREATE TABLE IF NOT EXISTS observer_state(state_key TEXT PRIMARY KEY,value_json TEXT NOT NULL,updated_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS settings(setting_key TEXT PRIMARY KEY,value_json TEXT NOT NULL,updated_at INTEGER NOT NULL);
         """)
         return con
 
@@ -60,13 +61,14 @@ class ObserverStore:
         with self.connect() as con: return [dict(row) for row in con.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))]
 
     def record_audit(self, action: str, target: str, success: bool, metadata: dict[str, Any] | None = None) -> None:
-        allowed_actions = {"drop_path", "drop_via", "drop_announces", "attach_interface", "detach_interface", "reload_interface"}
+        allowed_actions = {"drop_path", "drop_via", "drop_announces", "request_path", "blackhole_identity", "unblackhole_identity",
+                           "create_interface", "edit_interface", "clone_interface", "enable_interface", "disable_interface", "delete_interface"}
         if action not in allowed_actions:
             raise ValueError("unsupported audit action")
         safe_target = str(target)[:128]
         safe_metadata: dict[str, Any] = {}
         for key, value in (metadata or {}).items():
-            if key not in {"matching_path_count", "sample_count", "path_state_refreshed", "interface_operation"}:
+            if key not in {"matching_path_count", "sample_count", "path_state_refreshed", "interface_operation", "backup_created", "restart_requested", "deployment_verified", "secret_fields_present"}:
                 continue
             if isinstance(value, (bool, int, float)) or value is None:
                 safe_metadata[key] = value
@@ -81,3 +83,13 @@ class ObserverStore:
                         (now, "management_action", "info" if success else "error",
                          f"Management {action} {result}: {safe_target}", detail))
             con.execute("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 1000)")
+
+    def setting(self, key: str, default: Any = None) -> Any:
+        with self.connect() as con:
+            row = con.execute("SELECT value_json FROM settings WHERE setting_key=?", (key,)).fetchone()
+        try: return json.loads(row[0]) if row else default
+        except json.JSONDecodeError: return default
+
+    def save_setting(self, key: str, value: Any) -> None:
+        with self.connect() as con:
+            con.execute("INSERT INTO settings(setting_key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at", (key, json.dumps(value), int(time.time())))
