@@ -366,6 +366,20 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         session["pending_config_review"] = token
         return token
 
+    def _review_changes(before: str, after: str, target: str) -> list[dict[str, str]]:
+        """Return a redacted, stable old/new view for the reviewed interface."""
+        old_section = next((item for item in sections(before) if item.name == target), None)
+        new_section = next((item for item in sections(after) if item.name == target), None)
+        old_values = old_section.values() if old_section else {}
+        new_values = new_section.values() if new_section else {}
+        keys = [*old_values, *(key for key in new_values if key not in old_values)]
+        rows = []
+        for key in keys:
+            old = safe_values({key: old_values[key]}).get(key) if key in old_values else "—"
+            new = safe_values({key: new_values[key]}).get(key) if key in new_values else "—"
+            rows.append({"section": target, "key": key, "old": old, "new": new})
+        return rows
+
     @app.post("/interfaces/config/review")
     @login_required
     def review_interface_config():
@@ -415,7 +429,8 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         _store_config_review(action, target, expected, after, {"backup_clone": backup_clone, "secret_fields_present": any("[present, hidden]" in value for value in safe_values((original.values() if original else {})).values())})
         details = [("Action", action.replace("_", " ")), ("Interface", target), ("Backup clone", "A disabled backup clone will copy hidden credentials." if backup_clone else "Not selected"),
                    ("Restart", "Save only — lifecycle evidence is not positively identified")]
-        return render_template("config_review.html", action=action, target=target, details=details, diff=redact_diff(diff), restart_available=False)
+        return render_template("config_review.html", action=action, target=target, details=details,
+                               changes=_review_changes(before, after, target), diff=redact_diff(diff), restart_available=False)
 
     @app.post("/interfaces/config/execute")
     @login_required

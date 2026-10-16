@@ -131,6 +131,25 @@ def test_interface_mode_dropdown_renders_defaults_and_selected_legacy_value(tmp_
     assert '<option value="site-specific-mode" selected>Configured legacy value: site-specific-mode</option>' in edit
 
 
+def test_interface_review_shows_redacted_old_and_new_settings(tmp_path):
+    config = tmp_path / "config"
+    backend = ConfigurableBackend(config)
+    _, client = logged_client(tmp_path, backend)
+    config.write_text("[reticulum]\n\n[[LAN]]\ntype = TCPServerInterface\nenabled = yes\nmode = full\nlisten_port = 4242\npassphrase = hidden-secret\n")
+
+    review = client.post("/interfaces/config/review", data={
+        "csrf_token": "token", "operation": "edit", "name": "LAN", "type": "TCPServerInterface",
+        "enabled": "yes", "mode": "boundary", "listen_port": "4243", "ifac_enabled": "yes",
+    })
+    page = review.get_data(as_text=True)
+    assert review.status_code == 200
+    assert "Proposed interface settings" in page
+    assert "<th>Section</th><th>Setting</th><th>Old</th><th>New</th>" in page
+    assert "LAN</td><td>mode</td><td>full</td><td>boundary" in page
+    assert "LAN</td><td>listen_port</td><td>4242</td><td>4243" in page
+    assert "hidden-secret" not in page and "[present, hidden]" in page
+
+
 def test_management_drop_one_path_requires_review_csrf_and_post(tmp_path):
     config = tmp_path / "production-config"
     config.write_text("unchanged")
