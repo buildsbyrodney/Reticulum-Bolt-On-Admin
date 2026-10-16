@@ -15,6 +15,16 @@ def test_windows_installer_is_user_scoped_and_preflighted():
         assert forbidden not in INSTALL
 
 
+def test_windows_powershell_51_platform_guard_does_not_require_iswindows():
+    # Windows PowerShell 5.1 has no $IsWindows automatic variable. Keep this
+    # assertion literal so a future refactor cannot silently reintroduce it.
+    for script in (INSTALL, UNINSTALL):
+        assert "$IsWindows" not in script
+        assert "function Test-WindowsPlatform" in script
+        assert "$env:OS -eq 'Windows_NT'" in script
+        assert "[System.PlatformID]::Win32NT" in script
+
+
 def test_windows_uninstall_only_targets_named_bolt_on_resources():
     assert "Reticulum-Bolt-On-Admin" in UNINSTALL
     assert "Reticulum-Bolt-On-Admin-State" in UNINSTALL

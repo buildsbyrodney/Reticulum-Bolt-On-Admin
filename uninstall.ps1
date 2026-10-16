@@ -4,7 +4,12 @@ $ErrorActionPreference = 'Stop'
 $AppRoot = Join-Path $env:LOCALAPPDATA 'Reticulum-Bolt-On-Admin'
 $StateRoot = Join-Path $env:LOCALAPPDATA 'Reticulum-Bolt-On-Admin-State'
 $TaskName = 'Reticulum-Bolt-On-Admin'
-if (-not $IsWindows) { Write-Error 'This uninstaller is for native Windows only.'; exit 1 }
+function Test-WindowsPlatform {
+    # Compatible with both Windows PowerShell 5.1 and PowerShell 7+.
+    if ($env:OS -eq 'Windows_NT') { return $true }
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+if (-not (Test-WindowsPlatform)) { Write-Error 'This uninstaller is for native Windows only.'; exit 1 }
 Write-Host "Remove current-user Bolt-On startup task and application: $AppRoot"
 if ($Purge) { Write-Host "Also remove Bolt-On state: $StateRoot" } else { Write-Host "Preserve login, labels, history, database, and secret: $StateRoot" }
 Write-Host 'Reticulum config, storage, identities, rnsd, and unrelated port-8080 processes are preserved.'

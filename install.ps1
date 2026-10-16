@@ -12,6 +12,13 @@ $TaskName = 'Reticulum-Bolt-On-Admin'
 $ScriptRoot = $PSScriptRoot
 
 function Stop-Safely([string]$Message) { Write-Error "$Message Nothing was changed."; exit 1 }
+function Test-WindowsPlatform {
+    # Windows PowerShell 5.1 uses the conventional OS environment marker; the
+    # platform fallback keeps the
+    # guard reliable if that environment variable has been cleared.
+    if ($env:OS -eq 'Windows_NT') { return $true }
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
 function Find-Utility([string]$Name) {
     $found = Get-Command $Name -ErrorAction SilentlyContinue
     if ($found) { return $found.Source }
@@ -60,7 +67,7 @@ function Port-Free {
     catch { return -not (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) }
 }
 
-if (-not $IsWindows) { Stop-Safely 'This installer is for native Windows only.' }
+if (-not (Test-WindowsPlatform)) { Stop-Safely 'This installer is for native Windows only.' }
 $python = Find-Python
 if (-not $python) { Stop-Safely 'Python 3.10 or newer is required. Install it for this user, then retry.' }
 $pyVersion = & $python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))'

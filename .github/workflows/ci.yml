@@ -31,6 +31,13 @@ jobs:
           [void][System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}\install.ps1", [ref]$null, [ref]$errors)
           [void][System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}\uninstall.ps1", [ref]$null, [ref]$errors)
           if ($errors) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+      - name: Parse scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}\install.ps1", [ref]$null, [ref]$errors)
+          [void][System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}\uninstall.ps1", [ref]$null, [ref]$errors)
+          if ($errors) { $errors | Format-List | Out-String | Write-Error; exit 1 }
   container-architectures:
     runs-on: ubuntu-latest
     strategy:
