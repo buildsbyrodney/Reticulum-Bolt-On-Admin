@@ -145,7 +145,7 @@ serve(create_app(), host="127.0.0.1", port=8080)
 # Scheduler to lose ownership. task-runner.py adds venv site-packages itself.
 $action = New-ScheduledTaskAction -Execute $python -Argument ('"{0}"' -f $taskRunner)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet -DisallowStartIfOnBatteries:$false -StopIfGoingOnBatteries:$false
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description 'Reticulum Bolt-On Admin (current user only)' -Force | Out-Null
 if (-not $NoStart) { Start-ScheduledTask -TaskName $TaskName }
 Write-Host "Installed. Start: powershell -NoProfile -ExecutionPolicy Bypass -File `"$launcher`""

@@ -41,8 +41,8 @@ def test_windows_launcher_uses_waitress_factory_mode():
     assert "task-runner.py" in INSTALL
     assert "New-ScheduledTaskAction -Execute $python" in INSTALL
     assert "sys.path.insert(0, $venvSiteJson)" in INSTALL
-    assert "-DisallowStartIfOnBatteries:$false" in INSTALL
-    assert "-StopIfGoingOnBatteries:$false" in INSTALL
+    assert "-AllowStartIfOnBatteries" in INSTALL
+    assert "-DontStopIfGoingOnBatteries" in INSTALL
 
 
 def test_windows_uninstall_only_targets_named_bolt_on_resources():
