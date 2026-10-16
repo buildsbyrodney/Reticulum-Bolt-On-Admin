@@ -70,7 +70,7 @@ function Port-Free {
 if (-not (Test-WindowsPlatform)) { Stop-Safely 'This installer is for native Windows only.' }
 $python = Find-Python
 if (-not $python) { Stop-Safely 'Python 3.10 or newer is required. Install it for this user, then retry.' }
-$pyVersion = & $python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))'
+$pyVersion = & $python -c 'import sys; print(sys.version_info.major,sys.version_info.minor,sys.version_info.micro,sep=chr(46))'
 if ($LASTEXITCODE -ne 0 -or [version]$pyVersion -lt [version]'3.10') { Stop-Safely 'Python 3.10 or newer is required.' }
 & $python -c 'import venv' 2>$null
 if ($LASTEXITCODE -ne 0) { Stop-Safely 'This Python installation does not provide virtual-environment support.' }

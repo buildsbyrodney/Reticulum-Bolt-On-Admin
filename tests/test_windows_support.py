@@ -25,6 +25,16 @@ def test_windows_powershell_51_platform_guard_does_not_require_iswindows():
         assert "[System.PlatformID]::Win32NT" in script
 
 
+def test_windows_python_preflight_avoids_embedded_quoted_literals():
+    assert "sep=chr(46)" in INSTALL
+    assert 'print(".".join' not in INSTALL
+    # The remaining direct Python snippets contain only identifiers and
+    # punctuation, so Windows PowerShell's legacy native argument handling
+    # cannot remove an embedded string literal from them.
+    assert "-c 'import venv'" in INSTALL
+    assert "-c 'import RNS; print(RNS.__version__)'" in INSTALL
+
+
 def test_windows_uninstall_only_targets_named_bolt_on_resources():
     assert "Reticulum-Bolt-On-Admin" in UNINSTALL
     assert "Reticulum-Bolt-On-Admin-State" in UNINSTALL
