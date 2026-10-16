@@ -39,7 +39,9 @@ def test_windows_launcher_uses_waitress_factory_mode():
     assert "waitress-serve.exe' --listen=127.0.0.1:8080 --call 'reticulum_bolt_on.app:create_app'" in INSTALL
     assert "reticulum_bolt_on.app:create_app()" not in INSTALL
     assert "task-runner.py" in INSTALL
-    assert "New-ScheduledTaskAction -Execute $python" in INSTALL
+    assert "Join-Path (Split-Path -Parent $python) 'pythonw.exe'" in INSTALL
+    assert "New-ScheduledTaskAction -Execute $pythonw" in INSTALL
+    assert "does not provide its required sibling pythonw.exe" in INSTALL
     assert "sys.path.insert(0, $venvSiteJson)" in INSTALL
     assert "-AllowStartIfOnBatteries" in INSTALL
     assert "-DontStopIfGoingOnBatteries" in INSTALL

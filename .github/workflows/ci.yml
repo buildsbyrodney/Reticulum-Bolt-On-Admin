@@ -66,8 +66,12 @@ jobs:
           try {
             $env:LOCALAPPDATA = $testRoot
             $env:PATH = "$fakeBin;$oldPath"
+            $selectedPython = (Get-Command python).Source
+            $expectedPythonw = Join-Path (Split-Path -Parent $selectedPython) 'pythonw.exe'
             & powershell -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\install.ps1" -Config (Join-Path $configDir 'config') -Yes -NoStart
             if ($LASTEXITCODE -ne 0) { throw 'Installer failed' }
+            $installedTask = Get-ScheduledTask -TaskName $taskName
+            if ($installedTask.Actions.Execute -ine $expectedPythonw) { throw "Task must execute selected pythonw.exe, got: $($installedTask.Actions.Execute)" }
             Start-ScheduledTask -TaskName $taskName
             $deadline = (Get-Date).AddSeconds(30)
             do {

@@ -72,6 +72,10 @@ $python = Find-Python
 if (-not $python) { Stop-Safely 'Python 3.10 or newer is required. Install it for this user, then retry.' }
 $pyVersion = & $python -c 'import sys; print(sys.version_info.major,sys.version_info.minor,sys.version_info.micro,sep=chr(46))'
 if ($LASTEXITCODE -ne 0 -or [version]$pyVersion -lt [version]'3.10') { Stop-Safely 'Python 3.10 or newer is required.' }
+$pythonw = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
+if (-not (Test-Path -LiteralPath $pythonw -PathType Leaf)) {
+    Stop-Safely "The selected Python installation does not provide its required sibling pythonw.exe: $pythonw"
+}
 & $python -c 'import venv' 2>$null
 if ($LASTEXITCODE -ne 0) { Stop-Safely 'This Python installation does not provide virtual-environment support.' }
 
@@ -86,6 +90,7 @@ $shared = (& $rnstatus --config $configDir --json 2>$null) -and ($LASTEXITCODE -
 $freePort = Port-Free
 
 Write-Host "Python             $pyVersion OK"
+Write-Host 'Python windowless  pythonw.exe OK'
 Write-Host 'Reticulum          1.5.7 OK'
 Write-Host 'rnstatus           OK'
 Write-Host 'rnpath             OK'
@@ -140,10 +145,10 @@ from reticulum_bolt_on.app import create_app
 serve(create_app(), host="127.0.0.1", port=8080)
 "@ | Set-Content -LiteralPath $taskRunner -Encoding utf8
 
-# Execute the original user Python directly. Windows venv python.exe is a
-# redirector that can exit after launching its base interpreter, causing Task
+# Execute the original user Python's windowless sibling directly. The venv
+# redirector can exit after launching its base interpreter, causing Task
 # Scheduler to lose ownership. task-runner.py adds venv site-packages itself.
-$action = New-ScheduledTaskAction -Execute $python -Argument ('"{0}"' -f $taskRunner)
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument ('"{0}"' -f $taskRunner)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description 'Reticulum Bolt-On Admin (current user only)' -Force | Out-Null
