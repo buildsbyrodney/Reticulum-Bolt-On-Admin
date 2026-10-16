@@ -64,6 +64,21 @@ def safe_values(values: dict[str, str]) -> dict[str, str]:
             for key, value in values.items()}
 
 
+def redact_diff(diff: str) -> str:
+    """Keep review diffs useful without placing configured credentials in HTML."""
+    output = []
+    for line in diff.splitlines(keepends=True):
+        payload = line[1:] if line[:1] in {"+", "-"} else line
+        if "=" in payload and not payload.lstrip().startswith("#"):
+            key, _ = payload.split("=", 1)
+            if any(marker in key.strip().lower() for marker in SECRET_MARKERS):
+                ending = "\n" if line.endswith("\n") else ""
+                output.append(f"{line[:1]}{key}= [present, hidden]{ending}")
+                continue
+        output.append(line)
+    return "".join(output)
+
+
 def validate(name: str, values: dict[str, str]) -> None:
     if not NAME.fullmatch(name): raise ConfigValidationError("Interface name is invalid")
     kind = values.get("type", "")

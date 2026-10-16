@@ -45,7 +45,7 @@ def test_labels_stay_in_gui_database_only(tmp_path):
     assert response.status_code==302 and config.read_bytes()==before
     assert app.extensions["observer_store"].labels()[("transport","a"*32)]=="Backbone"
     assert "Backbone" in client.get("/paths").get_data(as_text=True)
-    assert 'name="kind" value="interface"' in client.get("/interfaces").get_data(as_text=True)
+    assert "Configured Interfaces" in client.get("/interfaces").get_data(as_text=True)
 
 
 def test_map_is_bounded_and_settling_is_not_continuous(tmp_path):

@@ -16,7 +16,7 @@ from .detection import detect
 from .models import ManagementResult
 from .parsers import bounded_paths, merge_interfaces, path_health
 from .storage import ObserverStore
-from .config_manager import ConfigConflict, ConfigManager, ConfigValidationError, INTERFACE_TYPES, render_section, sections, safe_values
+from .config_manager import ConfigConflict, ConfigManager, ConfigValidationError, INTERFACE_TYPES, redact_diff, render_section, sections, safe_values
 
 
 HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
@@ -135,13 +135,52 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
 
     @app.get("/interfaces")
     @login_required
-    def interfaces(): return render_template("interfaces.html", **observe())
+    def interfaces(): return render_template("interfaces_overview.html", **observe(), writable=config_write_available())
+
+    @app.get("/interfaces/runtime/<name>")
+    @login_required
+    def interface_runtime_detail(name: str):
+        model = observe(); row = next((item for item in model["interfaces"] if item.get("name") == name and not item.get("configured")), None)
+        if not row: abort(404, "Runtime/system interface was not found")
+        return render_template("interface_runtime_detail.html", interface=row)
 
     @app.get("/interfaces/config")
     @login_required
     def interface_config():
-        model = observe()
-        return render_template("interface_config.html", **model, writable=config_write_available(), supported_types=sorted(INTERFACE_TYPES))
+        return redirect(url_for("interfaces"))
+
+    def _configured_section(name: str):
+        manager = config_manager()
+        if not manager: abort(403, "Persistent configuration is read-only for this deployment")
+        text, _ = manager.read()
+        section = next((item for item in sections(text) if item.name == name), None)
+        if not section: abort(404, "Configured interface was not found")
+        return manager, section
+
+    @app.get("/interfaces/add")
+    @login_required
+    def interface_add():
+        if not config_write_available(): abort(403, "Persistent configuration is read-only for this deployment")
+        return render_template("interface_form.html", title="Add Interface", operation="create", interface=None,
+                               values={"enabled": "yes", "type": request.args.get("type", "TCPClientInterface")},
+                               evidence={}, supported_types=sorted(INTERFACE_TYPES))
+
+    @app.get("/interfaces/<name>/edit")
+    @login_required
+    def interface_edit(name: str):
+        _, section = _configured_section(name); model = observe(); values = safe_values(section.values())
+        evidence = _interface_evidence(model, name)
+        row = next((item for item in model["interfaces"] if item.get("name") == name), {})
+        return render_template("interface_form.html", title="Edit Interface", operation="edit", interface=row,
+                               values=values, evidence=evidence, supported_types=sorted(INTERFACE_TYPES))
+
+    @app.get("/interfaces/<name>/clone")
+    @login_required
+    def interface_clone(name: str):
+        _, section = _configured_section(name); model = observe(); row = next((item for item in model["interfaces"] if item.get("name") == name), {})
+        values = safe_values(section.values()); values["enabled"] = "no"
+        return render_template("interface_form.html", title="Clone Interface", operation="clone", interface=row,
+                               values=values, evidence={}, supported_types=sorted(INTERFACE_TYPES))
 
     @app.route("/deployment", methods=["GET", "POST"])
     @login_required
@@ -255,26 +294,6 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         if not HEX32.fullmatch(identity): abort(400, "Identity must be exactly 32 hexadecimal characters")
         return pending_review(action, identity, f"Review {identity_action} identity", "This operates only on the exact supplied Reticulum identity hash; no identity is inferred from network addresses.", [("Identity", identity)])
 
-    @app.post("/management/interface/review")
-    @login_required
-    def review_interface():
-        require_csrf()
-        operation = request.form.get("operation", "").strip().lower()
-        capability = f"{operation}_interface"
-        if operation not in {"attach", "detach", "reload"}: abort(400, "Invalid interface operation")
-        require_capability(capability)
-        name = request.form.get("name", "").strip()
-        if not name or len(name) > 128 or any(ord(char) < 32 for char in name): abort(400, "Invalid interface name")
-        model = observe()
-        interface = next((row for row in model["interfaces"] if str(row.get("name")) == name), None)
-        if not interface: abort(400, "Interface is not currently known")
-        if not interface.get("configured"): abort(400, "Runtime-only/internal interfaces cannot be managed")
-        if operation == "attach" and interface.get("runtime"): abort(400, "Interface is already attached")
-        if operation in {"detach", "reload"} and not interface.get("runtime"): abort(400, "Interface is not currently attached")
-        return pending_review(capability, name, f"Review interface {operation}",
-                              f"This asks the existing Reticulum shared instance to {operation} only this interface. It does not restart rnsd.",
-                              [("Interface", name), ("Operation", operation)], {"interface_operation": operation})
-
     @app.post("/management/<action>/execute")
     @login_required
     def execute_management(action: str):
@@ -293,8 +312,6 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
             elif action == "drop_announces": result = adapter.drop_announce_queues()
             elif action == "request_path": result = adapter.request_path(target)
             elif action in {"blackhole_identity", "unblackhole_identity"}: result = adapter.manage_identity(action.replace("_", "-"), target)
-            elif action in {"attach_interface", "detach_interface", "reload_interface"}:
-                result = adapter.manage_interface(action.removesuffix("_interface"), target)
             else: abort(400, "Unsupported management action")
         except Exception:
             result = ManagementResult(False, "The management backend failed safely; no unrelated action was attempted")
@@ -313,9 +330,16 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
 
     def _posted_values(existing: dict[str, str] | None = None) -> dict[str, str]:
         values = dict(existing or {})
-        for key in ("type", "enabled", "mode", "target_host", "target_port", "listen_host", "listen_ip", "listen_port", "port", "device", "group_id"):
+        for key in ("type", "enabled", "mode", "target_host", "target_port", "listen_host", "listen_ip", "listen_port", "port", "device", "group_id", "network_name", "passphrase", "ifac_netname", "ifac_passphrase", "ifac_size"):
             if key in request.form and request.form.get(key, "").strip(): values[key] = request.form[key].strip()
         if "enabled" in request.form: values["enabled"] = "yes" if request.form.get("enabled") in {"yes", "true", "1", "on"} else "no"
+        # Reticulum accepts both legacy IFAC and current connection-field names.
+        # Keep the spelling already present in a section rather than creating two
+        # competing values when an edit form is submitted unchanged.
+        if "ifac_netname" in values and request.form.get("network_name", "").strip():
+            values["ifac_netname"] = request.form["network_name"].strip(); values.pop("network_name", None)
+        if "ifac_passphrase" in values and request.form.get("passphrase", "").strip():
+            values["ifac_passphrase"] = request.form["passphrase"].strip(); values.pop("passphrase", None)
         return values
 
     def _store_config_review(action: str, target: str, expected: str, content: str, metadata: dict[str, Any]) -> str:
@@ -371,7 +395,7 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         _store_config_review(action, target, expected, after, {"backup_clone": backup_clone, "secret_fields_present": any("[present, hidden]" in value for value in safe_values((original.values() if original else {})).values())})
         details = [("Action", action.replace("_", " ")), ("Interface", target), ("Backup clone", "A disabled backup clone will copy hidden credentials." if backup_clone else "Not selected"),
                    ("Restart", "Save only — lifecycle evidence is not positively identified")]
-        return render_template("config_review.html", action=action, target=target, details=details, diff=diff, restart_available=False)
+        return render_template("config_review.html", action=action, target=target, details=details, diff=redact_diff(diff), restart_available=False)
 
     @app.post("/interfaces/config/execute")
     @login_required

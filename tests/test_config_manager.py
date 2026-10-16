@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from reticulum_bolt_on.config_manager import ConfigConflict, ConfigManager, render_section, sections
+from reticulum_bolt_on.config_manager import ConfigConflict, ConfigManager, redact_diff, render_section, sections
 
 
 CONFIG = """[reticulum]\n\n[[Trusted Upstream]]\ntype = TCPClientInterface\ntarget_host = old.example\ntarget_port = 4242\nenabled = yes\nifac_netkey = hidden-value\nunknown_setting = retain-me\n"""
@@ -31,3 +31,10 @@ def test_mode_is_preserved_after_atomic_replace(tmp_path):
     path = tmp_path / "config"; path.write_text(CONFIG); os.chmod(path, 0o600)
     manager = ConfigManager(path); content, token = manager.read(); manager.apply(token, content + "# saved\n")
     if os.name != "nt": assert (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_review_diff_hides_secrets():
+    diff = "-passphrase = old-secret\n+ifac_netkey = new-secret\n+target_host = safe.example\n"
+    rendered = redact_diff(diff)
+    assert "old-secret" not in rendered and "new-secret" not in rendered
+    assert "target_host = safe.example" in rendered and rendered.count("[present, hidden]") == 2
