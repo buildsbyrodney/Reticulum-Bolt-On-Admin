@@ -12,6 +12,7 @@ from flask import Flask, abort, flash, jsonify, redirect, render_template, reque
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .backend import ReticulumBackend, SharedInstanceBackend, SnapshotBackend
+from .lifecycle import LifecycleStatus
 from .detection import detect
 from .models import ManagementResult
 from .parsers import bounded_paths, merge_interfaces, path_health
@@ -103,6 +104,10 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     def config_write_available() -> bool:
         manager = config_manager()
         return bool(manager and manager.path.is_file() and os.access(manager.path, os.W_OK))
+
+    def lifecycle_status() -> LifecycleStatus:
+        inspect = getattr(adapter, "lifecycle_status", None)
+        return inspect() if inspect else LifecycleStatus(False, "Unsupported", "Restart unavailable — Reticulum lifecycle could not be identified safely.")
 
     @app.context_processor
     def common():
@@ -204,9 +209,10 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
             return redirect(url_for("deployment"))
         model = observe(); selected = model["detection"].selected
         saved = store.setting("deployment_type", "other")
-        # No lifecycle command is inferred from preference alone in v0.3.0.
+        lifecycle = lifecycle_status()
         return render_template("deployment.html", selected=selected, saved=saved, config_writable=config_write_available(),
-                               restart_available=False, evidence="Ambiguous — no lifecycle action is enabled until an exact runtime correlation is implemented.")
+                               lifecycle=lifecycle.public(), restart_available=lifecycle.available, evidence=lifecycle.message,
+                               runtime=model["runtime"])
 
     @app.get("/paths")
     @login_required
@@ -428,9 +434,12 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
             diff = "".join(__import__("difflib").unified_diff(before.splitlines(True), after.splitlines(True), "config (current)", "config (proposed)"))
         _store_config_review(action, target, expected, after, {"backup_clone": backup_clone, "secret_fields_present": any("[present, hidden]" in value for value in safe_values((original.values() if original else {})).values())})
         details = [("Action", action.replace("_", " ")), ("Interface", target), ("Backup clone", "A disabled backup clone will copy hidden credentials." if backup_clone else "Not selected"),
-                   ("Restart", "Save only — lifecycle evidence is not positively identified")]
+                   ("Config backup", f"Automatic timestamped backup beside {manager.path.name}"),
+                   ("Restart", "Available — Reticulum will stop briefly and reload all interfaces from the saved configuration." if lifecycle_status().available else "Save only — lifecycle evidence is not positively identified")]
+        lifecycle = lifecycle_status()
         return render_template("config_review.html", action=action, target=target, details=details,
-                               changes=_review_changes(before, after, target), diff=redact_diff(diff), restart_available=False)
+                               changes=_review_changes(before, after, target), diff=redact_diff(diff),
+                               restart_available=lifecycle.available, lifecycle=lifecycle.public())
 
     @app.post("/interfaces/config/execute")
     @login_required
@@ -439,13 +448,29 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         session.pop("pending_config_review", None)
         if not pending or time.time() - pending["issued_at"] > 300: abort(400, "Configuration review is missing or expired")
         if request.form.get("confirm") != "yes": abort(400, "Explicit confirmation is required")
+        apply_action = request.form.get("apply_action", "save")
+        if apply_action not in {"save", "restart"}: abort(400, "Invalid configuration action")
+        lifecycle = lifecycle_status()
+        if apply_action == "restart" and not lifecycle.available:
+            abort(409, "Restart unavailable — Reticulum lifecycle could not be identified safely.")
         manager = config_manager()
         if not manager: abort(403, "Persistent configuration is read-only for this deployment")
         try: backup = manager.apply(pending["expected"], pending["content"])
         except ConfigConflict as error: abort(409, str(error))
         except (ConfigValidationError, OSError) as error: abort(400, f"Configuration was not written: {error}")
-        metadata = dict(pending["metadata"]); metadata["backup_created"] = True; metadata["restart_requested"] = False
+        metadata = dict(pending["metadata"]); metadata["backup_created"] = True; metadata["restart_requested"] = apply_action == "restart"
         store.record_audit(pending["action"], pending["target"], True, metadata)
+        if apply_action == "restart":
+            store.record_audit("restart_requested", pending["target"], True, {"deployment_verified": True})
+            store.record_audit("restart_identity", pending["target"], True,
+                               {"process_ids": list(lifecycle.pids), "executable": lifecycle.executable or ""})
+            restart = getattr(adapter, "restart_reticulum")(lifecycle)
+            store.record_audit("restart_stop", pending["target"], restart.old_stopped, {"deployment_verified": True})
+            store.record_audit("restart_launch", pending["target"], restart.replacement_started, {"deployment_verified": True})
+            store.record_audit("restart_shared_instance", pending["target"], restart.shared_returned, {"deployment_verified": True})
+            store.record_audit("restart_result", pending["target"], restart.success, {"deployment_verified": True})
+            return render_template("restart_result.html", result=restart, backup=backup.name,
+                                   manual_command=f'& "{restart.executable}"' if restart.executable else None)
         flash(f"Configuration saved atomically. Backup created at {backup.name}. Restart Reticulum manually to apply changes.", "info")
         return redirect(url_for("interfaces"))
 

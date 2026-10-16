@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 
 from reticulum_bolt_on.app import create_app
+from reticulum_bolt_on.lifecycle import LifecycleStatus, RestartResult
 from reticulum_bolt_on.models import DetectionResult, InstallationCandidate, ManagementResult, RuntimeSnapshot
 
 
@@ -109,6 +110,21 @@ class ConfigurableBackend(FakeBackend):
         self.config_path = config
 
 
+class RestartableBackend(ConfigurableBackend):
+    def __init__(self, config):
+        super().__init__(config)
+        self.restart_calls = []
+
+    def lifecycle_status(self):
+        return LifecycleStatus(True, "Native Windows", "Verified current-user rnsd launch chain.",
+                               r"C:\Users\rodne\AppData\Roaming\Python\Python312\Scripts\rnsd.exe", (), (44, 45), "rodne", str(self.config_path))
+
+    def restart_reticulum(self, status):
+        self.restart_calls.append(status)
+        return RestartResult(True, "Reticulum restarted and the shared instance returned.", True, True, True,
+                             executable=status.executable)
+
+
 def _audit_rows(app):
     with app.extensions["observer_store"].connect() as con:
         return [dict(row) for row in con.execute("SELECT * FROM events WHERE kind='management_action' ORDER BY id")]
@@ -148,6 +164,29 @@ def test_interface_review_shows_redacted_old_and_new_settings(tmp_path):
     assert "LAN</td><td>mode</td><td>full</td><td>boundary" in page
     assert "LAN</td><td>listen_port</td><td>4242</td><td>4243" in page
     assert "hidden-secret" not in page and "[present, hidden]" in page
+
+
+def test_save_only_does_not_restart_but_reviewed_restart_does(tmp_path):
+    config = tmp_path / "config"
+    backend = RestartableBackend(config)
+    app, client = logged_client(tmp_path, backend)
+    config.write_text("[reticulum]\n\n[[LAN]]\ntype = TCPServerInterface\nenabled = yes\nmode = full\nlisten_port = 4242\n")
+    form = {"csrf_token": "token", "operation": "edit", "name": "LAN", "type": "TCPServerInterface",
+            "enabled": "yes", "mode": "boundary", "listen_port": "4242", "ifac_enabled": "no"}
+
+    review = client.post("/interfaces/config/review", data=form)
+    assert b"Save &amp; Restart Reticulum" in review.data
+    saved = client.post("/interfaces/config/execute", data={"csrf_token": "token", "confirm": "yes", "apply_action": "save"})
+    assert saved.status_code == 302 and backend.restart_calls == []
+
+    form["mode"] = "gateway"
+    client.post("/interfaces/config/review", data=form)
+    restarted = client.post("/interfaces/config/execute", data={"csrf_token": "token", "confirm": "yes", "apply_action": "restart"})
+    assert restarted.status_code == 200 and len(backend.restart_calls) == 1
+    assert b"Reticulum restart completed" in restarted.data
+    with app.extensions["observer_store"].connect() as con:
+        actions = [json.loads(row[0])["action"] for row in con.execute("SELECT detail_json FROM events WHERE kind='management_action'")]
+    assert {"restart_requested", "restart_identity", "restart_stop", "restart_launch", "restart_shared_instance", "restart_result"} <= set(actions)
 
 
 def test_management_drop_one_path_requires_review_csrf_and_post(tmp_path):

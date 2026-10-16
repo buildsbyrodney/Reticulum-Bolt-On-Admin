@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import shutil
+import sys
 import time
 import subprocess
 from abc import ABC, abstractmethod
@@ -14,6 +15,7 @@ from typing import Any, Callable
 
 from .detection import detect
 from .models import DetectionResult, InstallationCandidate, ManagementResult, RuntimeSnapshot
+from .lifecycle import LifecycleStatus, RestartResult, WindowsNativeLifecycle
 from .parsers import find_interfaces, normalize_paths, parse_config_interfaces, proven_clients
 from .subprocess_runner import run_command
 
@@ -55,6 +57,13 @@ class ReticulumBackend(ABC):
 
     def manage_identity(self, action: str, identity: str) -> ManagementResult:
         return ManagementResult(False, "Identity management is unavailable for this backend")
+
+    def lifecycle_status(self) -> LifecycleStatus:
+        return LifecycleStatus(False, "Unsupported", "Restart unavailable — Reticulum lifecycle could not be identified safely.")
+
+    def restart_reticulum(self, status: LifecycleStatus) -> RestartResult:
+        return RestartResult(False, "Restart unavailable — Reticulum lifecycle could not be identified safely.",
+                             False, False, False, executable=status.executable)
 
 
 
@@ -274,6 +283,34 @@ class SharedInstanceBackend(ReticulumBackend):
                 "attach_interface": False, "detach_interface": False,
                 "reload_interface": False, "edit_config": False, "restart_service": False,
                 "transport_enable": False}
+
+    def lifecycle_status(self) -> LifecycleStatus:
+        if self.snapshot_path or sys.platform != "win32" or not self.config_path:
+            return LifecycleStatus(False, "Native Windows", "Restart unavailable — Reticulum lifecycle could not be identified safely.")
+        current = self._current()
+        detected = self.detect().selected
+        version = current.rns_version or (detected.rns_version if detected else None)
+        return WindowsNativeLifecycle(self.config_path, version, current.available).inspect()
+
+    def restart_reticulum(self, status: LifecycleStatus) -> RestartResult:
+        if self.snapshot_path or sys.platform != "win32" or not self.config_path:
+            return RestartResult(False, "Restart unavailable — Reticulum lifecycle could not be identified safely.",
+                                 False, False, False, executable=status.executable)
+        current = self._current(); detected = self.detect().selected
+        version = current.rns_version or (detected.rns_version if detected else None)
+        lifecycle = WindowsNativeLifecycle(self.config_path, version, current.available)
+        def shared_probe() -> bool:
+            self._snapshot = None
+            return bool(self.runtime_status().available)
+        result = lifecycle.restart(status, shared_probe)
+        self._snapshot = None
+        if result.success:
+            refreshed = self.runtime_status()
+            if not refreshed.available or not (refreshed.rns_version or version) or not WindowsNativeLifecycle(self.config_path, refreshed.rns_version or version, True).inspect().available:
+                return RestartResult(False, "Replacement process started but post-restart verification did not complete.",
+                                     result.old_stopped, result.replacement_started, bool(refreshed.available),
+                                     executable=status.executable)
+        return result
 
     def _managed(self, action: str, target: str | None = None) -> ManagementResult:
         probe = getattr(self.manager, "supports", None) if self.manager else None

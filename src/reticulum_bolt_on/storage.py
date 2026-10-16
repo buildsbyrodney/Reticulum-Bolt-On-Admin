@@ -62,13 +62,17 @@ class ObserverStore:
 
     def record_audit(self, action: str, target: str, success: bool, metadata: dict[str, Any] | None = None) -> None:
         allowed_actions = {"drop_path", "drop_via", "drop_announces", "request_path", "blackhole_identity", "unblackhole_identity",
-                           "create_interface", "edit_interface", "clone_interface", "enable_interface", "disable_interface", "delete_interface"}
+                           "create_interface", "edit_interface", "clone_interface", "enable_interface", "disable_interface", "delete_interface",
+                           "restart_requested", "restart_identity", "restart_stop", "restart_launch", "restart_shared_instance", "restart_result"}
         if action not in allowed_actions:
             raise ValueError("unsupported audit action")
         safe_target = str(target)[:128]
         safe_metadata: dict[str, Any] = {}
         for key, value in (metadata or {}).items():
-            if key not in {"matching_path_count", "sample_count", "path_state_refreshed", "interface_operation", "backup_created", "restart_requested", "deployment_verified", "secret_fields_present"}:
+            if key not in {"matching_path_count", "sample_count", "path_state_refreshed", "interface_operation", "backup_created", "restart_requested", "deployment_verified", "secret_fields_present", "process_ids", "executable"}:
+                continue
+            if key == "process_ids" and isinstance(value, list) and all(isinstance(item, int) for item in value):
+                safe_metadata[key] = value[:8]
                 continue
             if isinstance(value, (bool, int, float)) or value is None:
                 safe_metadata[key] = value
