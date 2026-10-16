@@ -103,9 +103,32 @@ class ManagementBackend(FakeBackend):
     def manage_interface(self, operation, name): return self._result(f"{operation}_interface", name)
 
 
+class ConfigurableBackend(FakeBackend):
+    def __init__(self, config):
+        super().__init__(config)
+        self.config_path = config
+
+
 def _audit_rows(app):
     with app.extensions["observer_store"].connect() as con:
         return [dict(row) for row in con.execute("SELECT * FROM events WHERE kind='management_action' ORDER BY id")]
+
+
+def test_interface_mode_dropdown_renders_defaults_and_selected_legacy_value(tmp_path):
+    config = tmp_path / "config"
+    backend = ConfigurableBackend(config)
+    _, client = logged_client(tmp_path, backend)
+    config.write_text("[reticulum]\n\n[[LAN]]\ntype = TCPServerInterface\nlisten_port = 4242\nmode = site-specific-mode\n")
+
+    add = client.get("/interfaces/add").get_data(as_text=True)
+    assert '<option value="boundary" selected>Boundary</option>' in add
+    for value, label in (("full", "Full"), ("boundary", "Boundary"), ("internal", "Internal"),
+                         ("gateway", "Gateway"), ("point_to_point", "Point-to-Point"),
+                         ("access_point", "Access Point"), ("roaming", "Roaming")):
+        assert f'<option value="{value}"' in add and f'>{label}</option>' in add
+
+    edit = client.get("/interfaces/LAN/edit").get_data(as_text=True)
+    assert '<option value="site-specific-mode" selected>Configured legacy value: site-specific-mode</option>' in edit
 
 
 def test_management_drop_one_path_requires_review_csrf_and_post(tmp_path):

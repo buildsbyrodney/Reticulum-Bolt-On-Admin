@@ -34,6 +34,26 @@ def test_ifac_enable_and_size_workflow_is_present():
         assert text in page
 
 
+def test_mode_selector_has_standard_options_and_preserves_legacy_values():
+    page = (ROOT / "src/reticulum_bolt_on/templates/interface_form.html").read_text()
+    assert '<select id="interface-mode" name="mode">' in page
+    assert "{% for value,label in mode_options %}" in page
+    assert "values.get('mode','')|lower == value" in page
+    assert "Configured legacy value:" in page
+    for value, label in (("full", "Full"), ("boundary", "Boundary"), ("internal", "Internal"),
+                         ("gateway", "Gateway"), ("point_to_point", "Point-to-Point"),
+                         ("access_point", "Access Point"), ("roaming", "Roaming")):
+        assert f'("{value}", "{label}")' in (ROOT / "src/reticulum_bolt_on/app.py").read_text()
+
+
+def test_mode_presets_choose_expected_defaults():
+    page = (ROOT / "src/reticulum_bolt_on/templates/interface_form.html").read_text()
+    assert '"user-access":{name:"Public TCP",type:"TCPServerInterface",mode:"boundary"' in page
+    assert '"trusted-backbone":{name:"Trusted TCP",type:"TCPServerInterface",mode:"full"' in page
+    assert '"trusted-client":{name:"Trusted Upstream",type:"TCPClientInterface",mode:"full"' in page
+    assert "mode.value=p.mode" in page
+
+
 def test_no_live_interface_lifecycle_routes_returned_to_navigation():
     source = (ROOT / "src/reticulum_bolt_on/app.py").read_text()
     assert '"/management/interface/review"' not in source

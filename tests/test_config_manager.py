@@ -46,3 +46,11 @@ def test_render_can_remove_ifac_fields_without_touching_unknown_fields():
     rendered = "".join(render_section("LAN", {"type": "TCPServerInterface", "listen_port": "4242"}, section,
                                        {"passphrase", "ifac_size"}))
     assert "passphrase" not in rendered and "ifac_size" not in rendered and "unknown = keep" in rendered
+
+
+def test_unknown_mode_value_survives_round_trip_editing():
+    source = "[[Legacy]]\ntype = TCPServerInterface\nmode = site-specific-mode\nlisten_port = 4242\nunknown = keep\n"
+    section = sections(source)[0]
+    rendered = "".join(render_section(section.name, section.values(), section))
+    assert "mode = site-specific-mode" in rendered
+    assert "unknown = keep" in rendered

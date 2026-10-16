@@ -21,6 +21,15 @@ from .config_manager import ConfigConflict, ConfigManager, ConfigValidationError
 
 HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
 MANAGEMENT_CAPABILITIES = ("drop_path", "drop_via", "drop_announces", "request_path", "blackhole_identity", "unblackhole_identity", "edit_config")
+MODE_OPTIONS = (
+    ("full", "Full"),
+    ("boundary", "Boundary"),
+    ("internal", "Internal"),
+    ("gateway", "Gateway"),
+    ("point_to_point", "Point-to-Point"),
+    ("access_point", "Access Point"),
+    ("roaming", "Roaming"),
+)
 
 
 def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend | None = None) -> Flask:
@@ -162,8 +171,9 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
     def interface_add():
         if not config_write_available(): abort(403, "Persistent configuration is read-only for this deployment")
         return render_template("interface_form.html", title="Add Interface", operation="create", interface=None,
-                               values={"enabled": "yes", "type": request.args.get("type", "TCPClientInterface")},
-                               evidence={}, supported_types=sorted(INTERFACE_TYPES))
+                               values={"enabled": "yes", "type": request.args.get("type", "TCPServerInterface"), "mode": "boundary"},
+                               evidence={}, supported_types=sorted(INTERFACE_TYPES), mode_options=MODE_OPTIONS,
+                               mode_values={value for value, _ in MODE_OPTIONS})
 
     @app.get("/interfaces/<name>/edit")
     @login_required
@@ -172,7 +182,8 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         evidence = _interface_evidence(model, name)
         row = next((item for item in model["interfaces"] if item.get("name") == name), {})
         return render_template("interface_form.html", title="Edit Interface", operation="edit", interface=row,
-                               values=values, evidence=evidence, supported_types=sorted(INTERFACE_TYPES))
+                               values=values, evidence=evidence, supported_types=sorted(INTERFACE_TYPES), mode_options=MODE_OPTIONS,
+                               mode_values={value for value, _ in MODE_OPTIONS})
 
     @app.get("/interfaces/<name>/clone")
     @login_required
@@ -180,7 +191,8 @@ def create_app(config: dict[str, Any] | None = None, backend: ReticulumBackend |
         _, section = _configured_section(name); model = observe(); row = next((item for item in model["interfaces"] if item.get("name") == name), {})
         values = safe_values(section.values()); values["enabled"] = "no"
         return render_template("interface_form.html", title="Clone Interface", operation="clone", interface=row,
-                               values=values, evidence={}, supported_types=sorted(INTERFACE_TYPES))
+                               values=values, evidence={}, supported_types=sorted(INTERFACE_TYPES), mode_options=MODE_OPTIONS,
+                               mode_values={value for value, _ in MODE_OPTIONS})
 
     @app.route("/deployment", methods=["GET", "POST"])
     @login_required
