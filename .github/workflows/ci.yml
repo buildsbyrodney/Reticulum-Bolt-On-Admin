@@ -76,17 +76,23 @@ jobs:
               Start-Sleep -Milliseconds 250
             } while ((Get-Date) -lt $deadline)
             if (-not $listener) { throw 'Generated launcher did not listen on 127.0.0.1:8080' }
+            $listenerPid = [int]$listener.OwningProcess
             $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8080/setup'
             if ($response.StatusCode -ne 200) { throw "Unexpected GUI response: $($response.StatusCode)" }
-            if ((Get-ScheduledTask -TaskName $taskName).State -ne 'Running') { throw 'Scheduled Task did not remain running' }
+            $task = Get-ScheduledTask -TaskName $taskName
+            if ($task.State -ne 'Running') { throw 'Scheduled Task did not remain running' }
+            if ($task.Settings.DisallowStartIfOnBatteries -ne $false) { throw 'Task incorrectly disallows start on battery' }
+            if ($task.Settings.StopIfGoingOnBatteries -ne $false) { throw 'Task incorrectly stops on battery transition' }
             Stop-ScheduledTask -TaskName $taskName
             $deadline = (Get-Date).AddSeconds(15)
             do {
               $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue
-              if (-not $listener) { break }
+              $processAlive = Get-Process -Id $listenerPid -ErrorAction SilentlyContinue
+              if (-not $listener -and -not $processAlive) { break }
               Start-Sleep -Milliseconds 250
             } while ((Get-Date) -lt $deadline)
             if ($listener) { throw 'Scheduled Task did not stop the generated GUI launcher cleanly' }
+            if (Get-Process -Id $listenerPid -ErrorAction SilentlyContinue) { throw 'Scheduled Task left its exact GUI process running' }
           } finally {
             Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
             Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue

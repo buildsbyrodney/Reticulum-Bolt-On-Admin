@@ -124,9 +124,12 @@ $secretJson = (Join-Path $StateRoot 'secret' | ConvertTo-Json -Compress)
 $databaseJson = (Join-Path $StateRoot 'observer.db' | ConvertTo-Json -Compress)
 $configJson = ($selectedConfig | ConvertTo-Json -Compress)
 $toolsJson = (Split-Path $rnstatus | ConvertTo-Json -Compress)
+$venvSiteJson = (Join-Path $AppRoot 'venv\\Lib\\site-packages' | ConvertTo-Json -Compress)
 @"
 import os
+import sys
 from pathlib import Path
+sys.path.insert(0, $venvSiteJson)
 os.environ["BOLT_ON_SECRET_KEY"] = Path($secretJson).read_text(encoding="utf-8").strip()
 os.environ["BOLT_ON_DATABASE"] = $databaseJson
 os.environ["RETICULUM_CONFIG"] = $configJson
@@ -137,11 +140,13 @@ from reticulum_bolt_on.app import create_app
 serve(create_app(), host="127.0.0.1", port=8080)
 "@ | Set-Content -LiteralPath $taskRunner -Encoding utf8
 
-# The task executes Python directly, not a PowerShell parent that can leave a
-# child server orphaned when Task Scheduler stops it.
-$action = New-ScheduledTaskAction -Execute $venvPython -Argument ('"{0}"' -f $taskRunner)
+# Execute the original user Python directly. Windows venv python.exe is a
+# redirector that can exit after launching its base interpreter, causing Task
+# Scheduler to lose ownership. task-runner.py adds venv site-packages itself.
+$action = New-ScheduledTaskAction -Execute $python -Argument ('"{0}"' -f $taskRunner)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Description 'Reticulum Bolt-On Admin (current user only)' -Force | Out-Null
+$settings = New-ScheduledTaskSettingsSet -DisallowStartIfOnBatteries:$false -StopIfGoingOnBatteries:$false
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description 'Reticulum Bolt-On Admin (current user only)' -Force | Out-Null
 if (-not $NoStart) { Start-ScheduledTask -TaskName $TaskName }
 Write-Host "Installed. Start: powershell -NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
 Write-Host "Stop: Stop-ScheduledTask -TaskName $TaskName"

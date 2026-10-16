@@ -39,7 +39,10 @@ def test_windows_launcher_uses_waitress_factory_mode():
     assert "waitress-serve.exe' --listen=127.0.0.1:8080 --call 'reticulum_bolt_on.app:create_app'" in INSTALL
     assert "reticulum_bolt_on.app:create_app()" not in INSTALL
     assert "task-runner.py" in INSTALL
-    assert "New-ScheduledTaskAction -Execute $venvPython" in INSTALL
+    assert "New-ScheduledTaskAction -Execute $python" in INSTALL
+    assert "sys.path.insert(0, $venvSiteJson)" in INSTALL
+    assert "-DisallowStartIfOnBatteries:$false" in INSTALL
+    assert "-StopIfGoingOnBatteries:$false" in INSTALL
 
 
 def test_windows_uninstall_only_targets_named_bolt_on_resources():
