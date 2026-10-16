@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .parsers import find_interfaces, normalize_paths, parse_config_interfaces, proven_clients
+from .subprocess_runner import run_command
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 MAX_PATH_ROWS = 10_000
@@ -45,7 +46,7 @@ def _atomic_json(path: Path, value: Any, mode: int = 0o644) -> None:
 
 
 def _command_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+    return run_command(command, timeout=20)
 
 
 def _run_json(runner: Runner, command: list[str], label: str) -> Any:

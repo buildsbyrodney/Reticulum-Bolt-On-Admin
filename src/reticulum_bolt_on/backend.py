@@ -15,6 +15,7 @@ from typing import Any, Callable
 from .detection import detect
 from .models import DetectionResult, InstallationCandidate, ManagementResult, RuntimeSnapshot
 from .parsers import find_interfaces, normalize_paths, parse_config_interfaces, proven_clients
+from .subprocess_runner import run_command
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
@@ -54,7 +55,7 @@ class ReticulumBackend(ABC):
 
 
 def command_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
+    return run_command(command, timeout=8)
 
 
 class RNSManagementClient:

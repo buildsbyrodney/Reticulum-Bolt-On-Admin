@@ -13,12 +13,13 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .models import DetectionResult, InstallationCandidate
+from .subprocess_runner import run_command
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
 def default_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True, timeout=4, check=False)
+    return run_command(command, timeout=4)
 
 
 def common_config_paths(env: dict[str, str] | None = None, homes: Iterable[Path] | None = None) -> list[Path]:
