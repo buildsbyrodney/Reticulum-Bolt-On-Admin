@@ -116,7 +116,7 @@ $escapedConfig = $selectedConfig.Replace("'", "''"); $escapedState = $StateRoot.
 `$env:RETICULUM_CONFIG = '$escapedConfig'
 `$env:BOLT_ON_RNS_PYTHON = '$($python.Replace("'", "''"))'
 `$env:PATH = '$escapedTools;' + `$env:PATH
-& '$($AppRoot.Replace("'", "''"))\\venv\\Scripts\\waitress-serve.exe' --listen=127.0.0.1:8080 'reticulum_bolt_on.app:create_app()'
+& '$($AppRoot.Replace("'", "''"))\\venv\\Scripts\\waitress-serve.exe' --listen=127.0.0.1:8080 --call 'reticulum_bolt_on.app:create_app'
 "@ | Set-Content -LiteralPath $launcher -Encoding utf8
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
