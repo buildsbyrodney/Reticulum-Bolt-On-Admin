@@ -15,6 +15,14 @@ REQUIRED_EXISTING_PATHS = (
     "config", "storage", "storage/cache", "storage/resources", "storage/identities",
     "storage/blackhole", "interfaces", "storage/cache/announces",
 )
+RUNTIME_INTERFACE_LIMIT = 256
+RUNTIME_STRING_LIMIT = 240
+RUNTIME_INTERFACE_FIELDS = (
+    "name", "short_name", "type", "status", "mode", "rxb", "txb",
+    "arxb", "atxb", "arxc", "atxc", "prxc", "ptxc", "clients", "peers",
+    "parent_interface_name", "parent_interface_hash", "hash", "interface_hash",
+    "ifac_size",
+)
 
 
 def state_tree_ready(config_dir: Path) -> bool:
@@ -49,6 +57,70 @@ def _json_safe(value):
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+def _bounded_value(value):
+    """Return only small, public runtime values from shared-instance RPC data."""
+    value = _json_safe(value)
+    if isinstance(value, str):
+        return value[:RUNTIME_STRING_LIMIT]
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return None
+
+
+def _count_or_scalar(value):
+    if isinstance(value, (str, bytes, dict, list, tuple, set)):
+        try:
+            return len(value)
+        except TypeError:
+            return None
+    return _bounded_value(value)
+
+
+def read_runtime(config_dir: Path) -> tuple[bool, str, dict]:
+    """Read bounded runtime state without ever initialising an independent RNS instance.
+
+    ``get_interface_stats`` is served by the already-running shared instance
+    when Reticulum was constructed with ``require_shared_instance=True``.
+    Secrets such as IFAC names, passphrases, keys, signatures and identities
+    are deliberately omitted from the helper response.
+    """
+    try:
+        import RNS
+    except ImportError:
+        return False, "The selected Reticulum runtime is unavailable", {}
+    if not state_tree_ready(config_dir):
+        return False, "Existing Reticulum state tree is incomplete; refusing to create or modify it", {}
+    try:
+        reticulum = RNS.Reticulum(configdir=str(config_dir), require_shared_instance=True)
+        stats = reticulum.get_interface_stats()
+    except Exception:
+        return False, "Existing Reticulum shared-instance attachment is unavailable", {}
+    if not isinstance(stats, dict):
+        return False, "Existing Reticulum shared-instance returned unsupported runtime data", {}
+    interfaces = stats.get("interfaces")
+    if not isinstance(interfaces, list):
+        return False, "Existing Reticulum shared-instance returned unsupported runtime data", {}
+    rows = []
+    for raw in interfaces[:RUNTIME_INTERFACE_LIMIT]:
+        if not isinstance(raw, dict):
+            continue
+        row = {
+            key: (_count_or_scalar(raw[key]) if key in {"clients", "peers"} else _bounded_value(raw[key]))
+            for key in RUNTIME_INTERFACE_FIELDS if key in raw
+        }
+        # Presence is useful; the underlying IFAC material is not returned.
+        row["ifac_present"] = any(raw.get(key) is not None for key in
+                                  ("ifac_signature", "ifac_netname", "ifac_size"))
+        rows.append(row)
+    transport_enabled = "transport_id" in stats
+    return True, "Read runtime state from the existing shared instance", {
+        "rns_version": str(getattr(RNS, "__version__", ""))[:64] or None,
+        "shared_instance_available": True,
+        "transport_enabled": transport_enabled,
+        "interfaces": rows,
+    }
 
 
 def read_paths(config_dir: Path) -> tuple[bool, str, list[dict]]:
@@ -119,7 +191,7 @@ def execute(config_dir: Path, action: str, target: str | None) -> tuple[bool, st
 def main() -> None:
     parser = argparse.ArgumentParser(description="Narrow shared-instance-only Reticulum management helper")
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("action", choices=("probe", "read-paths", "drop-path", "drop-via", "drop-announces", "request-path", "blackhole-identity", "unblackhole-identity"))
+    parser.add_argument("action", choices=("probe", "read-runtime", "read-paths", "drop-path", "drop-via", "drop-announces", "request-path", "blackhole-identity", "unblackhole-identity"))
     parser.add_argument("target", nargs="?")
     args = parser.parse_args()
     if args.action == "probe":
@@ -134,6 +206,9 @@ def main() -> None:
     if args.action == "read-paths":
         success, message, paths = read_paths(args.config)
         raise SystemExit(_result(success, message, paths=paths))
+    if args.action == "read-runtime":
+        success, message, runtime = read_runtime(args.config)
+        raise SystemExit(_result(success, message, runtime=runtime))
     success, message = execute(args.config, args.action, args.target)
     raise SystemExit(_result(success, message))
 

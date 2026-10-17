@@ -170,6 +170,24 @@ class RNSManagementClient:
             return None, error or str((payload or {}).get("message") or "Shared-instance path query failed")
         return {"paths": payload.get("paths") or []}, None
 
+    def read_runtime(self) -> tuple[dict[str, Any] | None, str | None]:
+        """Read observation data only from an already-running shared instance."""
+        if not self.available:
+            return None, "Shared-instance-safe runtime reader is unavailable"
+        command = [str(self.interpreter), str(Path(__file__).with_name("management_helper.py")),
+                   "--config", str(self.config_dir), "read-runtime"]
+        payload, error = self._payload(command)
+        if not payload:
+            return None, error or "Shared-instance runtime query failed"
+        if not payload.get("success"):
+            return None, str(payload.get("message") or "Shared-instance runtime query failed")[:500]
+        runtime = payload.get("runtime")
+        if not isinstance(runtime, dict):
+            return None, "Shared-instance runtime helper returned invalid data"
+        if runtime.get("shared_instance_available") is not True or not isinstance(runtime.get("interfaces"), list):
+            return None, "Shared-instance runtime helper returned invalid data"
+        return runtime, None
+
 
 class SharedInstanceBackend(ReticulumBackend):
     """Observer adapter with a separately gated native management boundary.
@@ -218,8 +236,11 @@ class SharedInstanceBackend(ReticulumBackend):
         except json.JSONDecodeError: return None, "Reticulum utility returned invalid JSON"
 
     def runtime_status(self) -> RuntimeSnapshot:
-        prefix = ["--config", str(self.config_path.parent)] if self.config_path else []
-        status, error = self._run_json(["rnstatus", *prefix, "--json"])
+        if sys.platform == "win32":
+            status, error = self.manager.read_runtime() if self.manager else (None, "Shared-instance-safe runtime reader is unavailable")
+        else:
+            prefix = ["--config", str(self.config_path.parent)] if self.config_path else []
+            status, error = self._run_json(["rnstatus", *prefix, "--json"])
         if error:
             self._snapshot = RuntimeSnapshot(available=False, running=None, error="Shared-instance attachment unavailable: " + error)
             return self._snapshot

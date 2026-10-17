@@ -38,6 +38,8 @@ def _integer(value: Any) -> int | None:
 
 
 def _ifac_present(raw: dict[str, Any]) -> bool | None:
+    if "ifac_present" in raw:
+        return bool(raw["ifac_present"])
     names = ("ifac_signature", "ifac_size", "ifac_netname")
     if not any(name in raw for name in names):
         return None

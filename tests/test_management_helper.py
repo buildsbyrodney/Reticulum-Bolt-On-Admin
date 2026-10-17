@@ -1,7 +1,8 @@
+import json
 import sys
 from types import SimpleNamespace
 
-from reticulum_bolt_on.management_helper import execute, probe_capabilities, read_paths
+from reticulum_bolt_on.management_helper import execute, probe_capabilities, read_paths, read_runtime
 
 
 class FakeReticulum:
@@ -67,6 +68,42 @@ def test_path_reader_requires_shared_instance_and_serializes_hashes(monkeypatch,
     assert success
     assert FakeReticulum.instances[-1].kwargs == {"configdir": str(tmp_path), "require_shared_instance": True}
     assert paths == [{"hash": "a" * 32, "via": "b" * 32, "hops": 1}]
+
+
+def test_runtime_reader_requires_shared_instance_and_returns_bounded_safe_stats(monkeypatch, tmp_path):
+    class RuntimeReticulum(FakeReticulum):
+        def get_interface_stats(self):
+            self.calls.append(("get_interface_stats", None))
+            return {"transport_id": b"x" * 16, "interfaces": [{
+                "name": "WSL Test Client", "short_name": "WSL Test Client",
+                "type": "TCPClientInterface", "status": True, "mode": 1,
+                "rxb": 12, "txb": 34, "clients": {"private-client": object()}, "ifac_signature": b"secret-signature",
+                "ifac_netname": b"secret-network-name", "ifac_size": 64,
+                "passphrase": "never-return-this",
+            }]}
+
+    RuntimeReticulum.instances.clear(); _existing_state_tree(tmp_path)
+    monkeypatch.setitem(sys.modules, "RNS", SimpleNamespace(__version__="1.5.7", Reticulum=RuntimeReticulum))
+    success, _, runtime = read_runtime(tmp_path)
+    assert success and runtime["shared_instance_available"] and runtime["transport_enabled"] is True
+    assert RuntimeReticulum.instances[-1].kwargs == {"configdir": str(tmp_path), "require_shared_instance": True}
+    row = runtime["interfaces"][0]
+    assert row["rxb"] == 12 and row["clients"] == 1 and row["ifac_present"] is True
+    assert "ifac_signature" not in row and "ifac_netname" not in row and "passphrase" not in row
+    encoded = json.dumps(runtime)
+    assert "secret-signature" not in encoded and "secret-network-name" not in encoded and "private-client" not in encoded
+
+
+def test_runtime_reader_failure_does_not_fall_back_to_independent_rns(monkeypatch, tmp_path):
+    class UnavailableReticulum:
+        def __init__(self, **kwargs):
+            assert kwargs == {"configdir": str(tmp_path), "require_shared_instance": True}
+            raise RuntimeError("no shared instance")
+
+    _existing_state_tree(tmp_path)
+    monkeypatch.setitem(sys.modules, "RNS", SimpleNamespace(__version__="1.5.7", Reticulum=UnavailableReticulum))
+    success, message, runtime = read_runtime(tmp_path)
+    assert not success and "attachment is unavailable" in message and runtime == {}
 
 
 def test_rns_157_probe_disables_unsafe_per_interface_controls(tmp_path):

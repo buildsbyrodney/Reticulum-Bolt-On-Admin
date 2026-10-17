@@ -1,11 +1,13 @@
 import json
 import subprocess
 
+from reticulum_bolt_on import backend as backend_module
 from reticulum_bolt_on.backend import RNSManagementClient, SharedInstanceBackend
 from reticulum_bolt_on.models import ManagementResult
 
 
-def test_shared_instance_attachment_and_no_fallback(tmp_path):
+def test_shared_instance_attachment_and_no_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(backend_module.sys, "platform", "linux")
     config = tmp_path / "config"; config.write_text("[reticulum]\n[[LAN]]\ntype = TCPServerInterface\nenabled = yes\n")
     calls = []
     def runner(command):
@@ -21,7 +23,8 @@ def test_shared_instance_attachment_and_no_fallback(tmp_path):
     assert not any("rnsd" in call for command in calls for call in command)
 
 
-def test_failed_attachment_reports_unavailable_and_starts_nothing(tmp_path):
+def test_failed_attachment_reports_unavailable_and_starts_nothing(monkeypatch, tmp_path):
+    monkeypatch.setattr(backend_module.sys, "platform", "linux")
     calls=[]
     def runner(command): calls.append(command); return subprocess.CompletedProcess(command, 1, "", "no shared instance")
     snap = SharedInstanceBackend(tmp_path/"config", runner=runner).runtime_status()
@@ -59,8 +62,13 @@ class FakeManager:
         self.path_reads += 1
         return {"paths": self.paths}, None
 
+    def read_runtime(self):
+        return {"rns_version": "1.5.7", "shared_instance_available": True,
+                "transport_enabled": None, "interfaces": []}, None
 
-def test_native_management_is_capability_gated_and_refreshes_paths(tmp_path):
+
+def test_native_management_is_capability_gated_and_refreshes_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(backend_module.sys, "platform", "linux")
     config = tmp_path / "config"
     config.write_text("[reticulum]\n")
     calls = []
@@ -82,6 +90,39 @@ def test_native_management_is_capability_gated_and_refreshes_paths(tmp_path):
         ["rnstatus", "--config", str(tmp_path), "--json"],
     ]
     assert not any("rnsd" in argument for command in calls for argument in command)
+
+
+def test_windows_runtime_uses_shared_helper_and_never_invokes_rnstatus(monkeypatch, tmp_path):
+    monkeypatch.setattr(backend_module.sys, "platform", "win32")
+    config = tmp_path / "config"
+    config.write_text("[reticulum]\n[[WSL Test Client]]\ntype = TCPClientInterface\n")
+    manager = FakeManager()
+    manager.read_runtime = lambda: ({
+        "rns_version": "1.5.7", "shared_instance_available": True,
+        "transport_enabled": None,
+        "interfaces": [{"name": "WSL Test Client", "short_name": "WSL Test Client",
+                        "type": "TCPClientInterface", "status": True, "mode": 1,
+                        "rxb": 12, "txb": 34, "ifac_present": True}],
+    }, None)
+
+    def runner(command):
+        raise AssertionError(f"Windows runtime observation must not invoke {command}")
+
+    snap = SharedInstanceBackend(config, runner=runner, manager=manager).runtime_status()
+    assert snap.available and snap.rns_version == "1.5.7" and snap.transport_enabled is None
+    assert snap.interfaces[0]["name"] == "WSL Test Client"
+    assert snap.interfaces[0]["rx_bytes"] == 12 and snap.interfaces[0]["ifac_present"] is True
+    assert manager.path_reads == 1
+
+
+def test_windows_runtime_helper_failure_disables_shared_instance_and_lifecycle(monkeypatch, tmp_path):
+    monkeypatch.setattr(backend_module.sys, "platform", "win32")
+    config = tmp_path / "config"; config.write_text("[reticulum]\n")
+    manager = FakeManager()
+    manager.read_runtime = lambda: (None, "Existing Reticulum shared-instance attachment is unavailable")
+    backend = SharedInstanceBackend(config, runner=lambda command: (_ for _ in ()).throw(AssertionError(command)), manager=manager)
+    assert not backend.runtime_status().available
+    assert not backend.lifecycle_status().available
 
 
 def test_management_backend_rejects_invalid_hash_before_execution(tmp_path):
@@ -110,6 +151,18 @@ def test_management_capability_probe_requires_exact_supported_runtime(tmp_path):
     assert client.supports("drop-path") is True
     assert client.supports("drop-via") is False
     assert len(calls) == 1 and calls[0][-1] == "probe"
+
+
+def test_runtime_helper_client_accepts_only_valid_shared_instance_payload(tmp_path):
+    interpreter = tmp_path / "python"; interpreter.write_text(""); interpreter.chmod(0o755)
+
+    def runner(command):
+        assert command[-1] == "read-runtime"
+        return subprocess.CompletedProcess(command, 0,
+            '{"success":true,"runtime":{"rns_version":"1.5.7","shared_instance_available":true,"transport_enabled":null,"interfaces":[]}}\n', "")
+
+    runtime, error = RNSManagementClient(tmp_path, interpreter=interpreter, runner=runner).read_runtime()
+    assert error is None and runtime["shared_instance_available"] is True
 
 
 def test_management_interpreter_discovery_supports_env_python_shebang(tmp_path, monkeypatch):
