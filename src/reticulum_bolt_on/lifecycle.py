@@ -29,6 +29,13 @@ class ProcessRecord:
 
 
 @dataclass(frozen=True)
+class ProcessEnumeration:
+    """The process snapshot, or a deliberately non-sensitive query failure."""
+    records: tuple[ProcessRecord, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class LifecycleStatus:
     available: bool
     deployment: str
@@ -62,31 +69,55 @@ def _current_owner() -> str | None:
     return os.environ.get("USERNAME") if sys.platform == "win32" else None
 
 
-def _windows_processes() -> list[ProcessRecord]:
+def _windows_processes() -> ProcessEnumeration:
     """Read process evidence through CIM without invoking a shell command string."""
     script = r"""
-$rows = foreach ($p in Get-CimInstance Win32_Process) {
+$ErrorActionPreference = 'Stop'
+$rows = foreach ($p in Get-CimInstance Win32_Process -ErrorAction Stop) {
   $owner = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction SilentlyContinue
   if ($owner -and $owner.ReturnValue -eq 0) { $who = $owner.User } else { $who = '' }
-  [pscustomobject]@{pid=[int]$p.ProcessId;parent_pid=[int]$p.ParentProcessId;executable=($p.ExecutablePath ?? '');command_line=($p.CommandLine ?? '');owner=$who}
+  $executable = ''
+  if ($null -ne $p.ExecutablePath) { $executable = [string]$p.ExecutablePath }
+  $commandLine = ''
+  if ($null -ne $p.CommandLine) { $commandLine = [string]$p.CommandLine }
+  [pscustomobject]@{pid=[int]$p.ProcessId;parent_pid=[int]$p.ParentProcessId;executable=$executable;command_line=$commandLine;owner=$who}
 }
-$rows | ConvertTo-Json -Compress
+@($rows) | ConvertTo-Json -Compress
 """
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                            capture_output=True, text=True, timeout=8, check=False,
-                            creationflags=flags)
+    try:
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                                capture_output=True, text=True, timeout=8, check=False,
+                                creationflags=flags)
+    except (OSError, subprocess.TimeoutExpired):
+        return ProcessEnumeration(error="Windows process enumeration could not be completed.")
     if result.returncode:
-        return []
+        return ProcessEnumeration(error="Windows process enumeration could not be completed.")
     try:
         rows = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
-        return []
+        return ProcessEnumeration(error="Windows process enumeration returned invalid data.")
     if isinstance(rows, dict):
         rows = [rows]
-    return [ProcessRecord(int(row.get("pid") or 0), int(row.get("parent_pid") or 0),
-                          str(row.get("executable") or ""), str(row.get("command_line") or ""),
-                          str(row.get("owner") or "")) for row in rows if int(row.get("pid") or 0) > 0]
+    if not isinstance(rows, list):
+        return ProcessEnumeration(error="Windows process enumeration returned invalid data.")
+    return ProcessEnumeration(tuple(
+        ProcessRecord(int(row.get("pid") or 0), int(row.get("parent_pid") or 0),
+                      str(row.get("executable") or ""), str(row.get("command_line") or ""),
+                      str(row.get("owner") or ""))
+        for row in rows if isinstance(row, dict) and int(row.get("pid") or 0) > 0
+    ))
+
+
+def _process_snapshot(provider: Callable[[], list[ProcessRecord] | ProcessEnumeration]) -> ProcessEnumeration:
+    """Keep injected list providers compatible while making real-query failures explicit."""
+    try:
+        result = provider()
+    except (OSError, subprocess.TimeoutExpired):
+        return ProcessEnumeration(error="Windows process enumeration could not be completed.")
+    if isinstance(result, ProcessEnumeration):
+        return result
+    return ProcessEnumeration(tuple(result))
 
 
 def _arguments(record: ProcessRecord, config_path: Path, owner: str) -> tuple[str, ...] | None:
@@ -115,7 +146,7 @@ def _arguments(record: ProcessRecord, config_path: Path, owner: str) -> tuple[st
 class WindowsNativeLifecycle:
     """Restart only a proven current-user ``rnsd.exe`` launch chain."""
     def __init__(self, config_path: Path, version: str | None, shared_available: bool,
-                 process_provider: Callable[[], list[ProcessRecord]] = _windows_processes,
+                 process_provider: Callable[[], list[ProcessRecord] | ProcessEnumeration] = _windows_processes,
                  sleeper: Callable[[float], None] = time.sleep):
         self.config_path = config_path
         self.version = version
@@ -132,17 +163,25 @@ class WindowsNativeLifecycle:
         owner = _current_owner()
         if not owner:
             return LifecycleStatus(False, "Native Windows", "Restart unavailable — Reticulum lifecycle could not be identified safely.")
+        snapshot = _process_snapshot(self.process_provider)
+        if snapshot.error:
+            return LifecycleStatus(False, "Native Windows", "Restart unavailable — Windows process enumeration failed.")
         roots: list[tuple[ProcessRecord, tuple[str, ...]]] = []
-        for record in self.process_provider():
+        for record in snapshot.records:
             if record.owner.lower() != owner.lower():
                 continue
             args = _arguments(record, self.config_path, owner)
             if args is not None:
                 roots.append((record, args))
+        if not roots:
+            return LifecycleStatus(False, "Native Windows", "Restart unavailable — no matching current-user rnsd launch chain was found.")
         if len(roots) != 1:
-            return LifecycleStatus(False, "Native Windows", "Restart unavailable — Reticulum lifecycle could not be identified safely.")
+            return LifecycleStatus(False, "Native Windows", "Restart unavailable — multiple matching rnsd launch chains were found.")
         root, args = roots[0]
-        records = self.process_provider()
+        chain_snapshot = _process_snapshot(self.process_provider)
+        if chain_snapshot.error:
+            return LifecycleStatus(False, "Native Windows", "Restart unavailable — Windows process enumeration failed.")
+        records = chain_snapshot.records
         chain = {root.pid}
         changed = True
         while changed:
@@ -185,7 +224,11 @@ class WindowsNativeLifecycle:
             return RestartResult(False, "Reticulum stop failed; no replacement was launched.", False, False, False, executable=status.executable)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if not any(item.pid in status.pids for item in self.process_provider()):
+            snapshot = _process_snapshot(self.process_provider)
+            if snapshot.error:
+                return RestartResult(False, "Reticulum stopped, but process verification failed; no replacement was launched.",
+                                     True, False, False, executable=status.executable)
+            if not any(item.pid in status.pids for item in snapshot.records):
                 break
             self.sleeper(0.25)
         else:

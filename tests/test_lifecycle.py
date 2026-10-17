@@ -1,3 +1,9 @@
+import os
+import subprocess
+import sys
+
+import pytest
+
 from reticulum_bolt_on import lifecycle
 
 
@@ -41,6 +47,31 @@ def test_windows_lifecycle_refuses_ambiguous_or_unrelated_processes(monkeypatch,
     assert not lifecycle.WindowsNativeLifecycle(config, "1.5.7", True, lambda: roots).inspect().available
     foreign = [lifecycle.ProcessRecord(41, 1, str(executable), f'"{executable}"', "someone-else")]
     assert not lifecycle.WindowsNativeLifecycle(config, "1.5.7", True, lambda: foreign).inspect().available
+
+
+def test_windows_lifecycle_distinguishes_query_failure_from_no_matching_process(monkeypatch, tmp_path):
+    config, _ = _windows_environment(monkeypatch, tmp_path)
+    failed = lifecycle.WindowsNativeLifecycle(
+        config, "1.5.7", True,
+        lambda: lifecycle.ProcessEnumeration(error="Windows process enumeration could not be completed."),
+    ).inspect()
+    missing = lifecycle.WindowsNativeLifecycle(config, "1.5.7", True, lambda: []).inspect()
+    assert "process enumeration failed" in failed.message
+    assert "no matching current-user rnsd launch chain" in missing.message
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows PowerShell 5.1")
+def test_windows_powershell_51_executes_exact_lifecycle_cim_query():
+    """Exercise the module's real CIM script via powershell.exe, not a mock."""
+    version = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.Major"],
+        capture_output=True, text=True, check=True,
+    )
+    assert version.stdout.strip() == "5"
+    snapshot = lifecycle._windows_processes()
+    assert snapshot.error is None
+    assert any(record.pid == os.getpid() and record.owner.lower() == os.environ["USERNAME"].lower()
+               for record in snapshot.records)
 
 
 def test_windows_restart_stops_exact_chain_once_and_launches_exact_executable(monkeypatch, tmp_path):

@@ -38,6 +38,9 @@ jobs:
           [void][System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}\install.ps1", [ref]$null, [ref]$errors)
           [void][System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}\uninstall.ps1", [ref]$null, [ref]$errors)
           if ($errors) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+      - name: Execute lifecycle CIM query with Windows PowerShell 5.1
+        shell: powershell
+        run: python -m pytest tests/test_lifecycle.py::test_windows_powershell_51_executes_exact_lifecycle_cim_query
       - name: Execute Python preflight probes with Windows PowerShell 5.1
         shell: powershell
         run: |
